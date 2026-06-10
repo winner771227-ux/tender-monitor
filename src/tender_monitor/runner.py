@@ -33,12 +33,28 @@ async def run_monitor_async(settings: Settings) -> tuple[Path, Path, int]:
                     for scraper_class in SCRAPER_CLASSES
                 ]
                 results = await asyncio.gather(*(scraper.scrape(browser) for scraper in scrapers))
-            finally:
-                await browser.close()
 
-        all_tenders = remove_duplicates(
-            [tender for result in results for tender in result.tenders]
-        )
+print("\n=== SCRAPER RESULTS ===")
+
+for result in results:
+    print(
+        f"SCRAPER={result.source} "
+        f"TENDERS={len(result.tenders)} "
+        f"ERROR={result.error}"
+    )
+
+       total_before_dedupe = sum(
+    len(result.tenders)
+    for result in results
+)
+
+all_tenders = remove_duplicates(
+    [tender for result in results for tender in result.tenders]
+)
+
+print("\n=== SUMMARY ===")
+print(f"TOTAL_BEFORE_DEDUPE={total_before_dedupe}")
+print(f"TOTAL_AFTER_DEDUPE={len(all_tenders)}")
         deduped_results = [ScrapeResult(source="deduplicated", tenders=all_tenders)]
         database.save_results(run_id, deduped_results)
         scraper_errors = "; ".join(
@@ -63,7 +79,11 @@ async def run_monitor_async(settings: Settings) -> tuple[Path, Path, int]:
         body=f"Monitoring dokončen. Počet zakázek v reportu: {len(rows)}.",
         attachments=[excel_path, html_path],
     )
-    return excel_path, html_path, len(rows)
+   print("\n=== REPORT ===")
+print(f"ROWS_IN_DATABASE={len(rows)}")
+print(f"EXCEL={excel_path}")
+print(f"HTML={html_path}") 
+return excel_path, html_path, len(rows)
 
 
 def run_monitor(settings: Settings) -> tuple[Path, Path, int]:
