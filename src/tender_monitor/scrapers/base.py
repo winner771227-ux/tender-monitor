@@ -73,7 +73,11 @@ class BaseScraper(ABC):
         self.timeout_ms = timeout_ms
 
     async def scrape(self, browser: Browser) -> ScrapeResult:
-        page = await browser.new_page()
+        await page.goto(
+    self.url,
+    wait_until="networkidle",
+    timeout=max(self.timeout_ms, 120000),
+)
         page.set_default_timeout(self.timeout_ms)
         try:
             await page.goto(self.url, wait_until="domcontentloaded")
