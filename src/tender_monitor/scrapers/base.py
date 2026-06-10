@@ -133,14 +133,33 @@ class BaseScraper(ABC):
         )
         return [keyword for keyword in self.keywords if normalize_text(keyword) in haystack]
 
+    from datetime import datetime, timedelta
+
     def filter_by_keywords(self, tenders: list[Tender]) -> list[Tender]:
-        filtered: list[Tender] = []
-        for tender in tenders:
-            matches = self.keyword_matches(tender)
-            if matches:
-                tender.matched_keywords = matches
-                filtered.append(tender)
-        return filtered
+    filtered: list[Tender] = []
+
+    cutoff = datetime.now() - timedelta(days=14)
+
+    for tender in tenders:
+        matches = self.keyword_matches(tender)
+
+        if not matches:
+            continue
+
+        if tender.published_at:
+            try:
+                published = self.parse_date(tender.published_at)
+
+                if published and published < cutoff:
+                    continue
+
+            except Exception:
+                pass
+
+        tender.matched_keywords = matches
+        filtered.append(tender)
+
+    return filtered
 
     async def collect_link_tenders(self, page: Page, link_selector: str) -> list[Tender]:
         """Collect visible tender links from a page."""
