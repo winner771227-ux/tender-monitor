@@ -1,0 +1,15 @@
+from __future__ import annotations
+
+from playwright.async_api import Page
+
+from tender_monitor.models import Tender
+from tender_monitor.scrapers.base import BaseScraper
+
+
+class ProfilyProebizScraper(BaseScraper):
+    source = "Profily PROEBIZ"
+    url = "https://profily.proebiz.com/verejne-zakazky"
+
+    async def scrape_page(self, page: Page) -> list[Tender]:
+        # TODO: doplnit přesné selektory Profily PROEBIZ po ověření aktuální struktury portálu.
+        return await self.collect_link_tenders(page, "a[href*='verejne-zakazky']")
