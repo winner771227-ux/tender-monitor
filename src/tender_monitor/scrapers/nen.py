@@ -17,10 +17,10 @@ class NenScraper(BaseScraper):
 
         for _ in range(self.max_pages):
             visited_urls.add(page.url)
-            await page.wait_for_selector(
-                "xpath=//table[.//th[contains(normalize-space(.), 'Systémové číslo NEN')]]//tr[td]",
-                state="attached",
-                timeout=self.timeout_ms,
+            await page.goto(
+    self.url,
+    wait_until="networkidle",
+    timeout=120000
             )
             tenders.extend(await self.collect_table_tenders(page, table_xpath, detail_selector="a:has-text('Detail')"))
             if not await self.goto_next_page(page, visited_urls):
