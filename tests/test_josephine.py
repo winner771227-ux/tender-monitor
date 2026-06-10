@@ -9,6 +9,7 @@ if importlib.util.find_spec("playwright") is None:
     async_api_module = types.ModuleType("playwright.async_api")
     async_api_module.Browser = object
     async_api_module.Page = object
+    async_api_module.Locator = object
     sys.modules["playwright"] = playwright_module
     sys.modules["playwright.async_api"] = async_api_module
 

@@ -5,7 +5,7 @@ Python projekt pro monitoring veřejných zakázek na českých portálech se za
 ## Funkce
 
 - Python 3.12
-- Playwright scraper skeletony pro všechny požadované portály
+- Playwright scrapery pro všechny požadované portály
 - SQLite úložiště s historií běhů a výsledků
 - odstranění duplicit podle normalizovaného klíče zakázky
 - filtrování podle hledaných slov:
@@ -14,6 +14,8 @@ Python projekt pro monitoring veřejných zakázek na českých portálech se za
   - `odstranění stavby`
   - `odstranění staveb`
   - `demoliční práce`
+  - `odstranění objektu`
+  - `likvidace stavby`
 - Excel export (`.xlsx`)
 - HTML report
 - odeslání reportu e-mailem přes SMTP
@@ -97,9 +99,9 @@ Pro SMTP odeslání v GitHub Actions nastavte repository secrets:
 - `SMTP_TO`
 - `SMTP_USE_TLS` (volitelné, výchozí hodnota je `true`)
 
-## Doplnění konkrétních scraperů
+## Scrapery
 
-Každý scraper dědí z `BaseScraper` a implementuje metodu `scrape_page`. Aktuální verze obsahuje bezpečný skeleton: otevře portál, zachytí chyby a vrátí strukturované položky, jakmile budou doplněny selektory konkrétního portálu.
+Každý scraper dědí z `BaseScraper` a implementuje metodu `scrape_page`. Scrapery používají Playwright selektory pro tabulkové a kartové seznamy veřejných zakázek, extrahují název, zadavatele, datum zveřejnění, lhůtu a URL detailu a následně aplikují filtr demoličních klíčových slov. Pokud portál neposkytuje datum zveřejnění nebo lhůtu, příslušná hodnota zůstane prázdná (`None`).
 
 ## Struktura projektu
 
