@@ -79,7 +79,6 @@ class BaseScraper(ABC):
     async def scrape(self, browser: Browser) -> ScrapeResult:
 page = await browser.new_page()
 
-```
 page.set_default_timeout(
     max(self.timeout_ms, 120000)
 )
@@ -123,7 +122,6 @@ except Exception as exc:
 
 finally:
     await page.close()
-
 
     @abstractmethod
     async def scrape_page(self, page: Page) -> list[Tender]:
