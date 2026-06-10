@@ -139,10 +139,6 @@ async def run_monitor_async(settings: Settings) -> tuple[Path, Path, int]:
     )
 
     print("\n=== REPORT ===")
-        for row in rows:
-        print(
-            f"{row.source} | {row.published_at} | {row.title}"
-        )
     print(f"ROWS_IN_DATABASE={len(rows)}")
     print(f"EXCEL={excel_path}")
     print(f"HTML={html_path}")
