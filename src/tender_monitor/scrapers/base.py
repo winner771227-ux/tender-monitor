@@ -136,43 +136,43 @@ class BaseScraper(ABC):
     from datetime import datetime, timedelta
 
     def filter_by_keywords(self, tenders: list[Tender]) -> list[Tender]:
-    from datetime import datetime, timedelta
+        from datetime import datetime, timedelta
 
-    filtered: list[Tender] = []
+        filtered: list[Tender] = []
 
-    cutoff = datetime.now() - timedelta(days=14)
+        cutoff = datetime.now() - timedelta(days=14)
 
-    for tender in tenders:
-        matches = self.keyword_matches(tender)
+        for tender in tenders:
+            matches = self.keyword_matches(tender)
 
-        if not matches:
-            continue
+            if not matches:
+                continue
 
-        if tender.published_at:
-            try:
-                date_text = tender.published_at[:10]
+            if tender.published_at:
+                try:
+                    date_text = tender.published_at[:10]
 
-                if "." in date_text:
-                    published = datetime.strptime(
-                        date_text,
-                        "%d.%m.%Y",
-                    )
-                else:
-                    published = datetime.strptime(
-                        date_text,
-                        "%Y-%m-%d",
-                    )
+                    if "." in date_text:
+                        published = datetime.strptime(
+                            date_text,
+                            "%d.%m.%Y",
+                        )
+                    else:
+                        published = datetime.strptime(
+                            date_text,
+                            "%Y-%m-%d",
+                        )
 
-                if published < cutoff:
-                    continue
+                    if published < cutoff:
+                        continue
 
-            except Exception:
-                pass
+                except Exception:
+                    pass
 
-        tender.matched_keywords = matches
-        filtered.append(tender)
+            tender.matched_keywords = matches
+            filtered.append(tender)
 
-    return filtered
+        return filtered
 
     async def collect_link_tenders(self, page: Page, link_selector: str) -> list[Tender]:
         """Collect visible tender links from a page."""
