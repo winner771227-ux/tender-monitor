@@ -14,7 +14,7 @@ from tender_monitor.exporters import export_excel, export_html
 from tender_monitor.models import ScrapeResult
 from tender_monitor.scrapers import SCRAPER_CLASSES
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(__name__) logging.basicConfig(level=logging.INFO)
 
 
 async def run_monitor_async(settings: Settings) -> tuple[Path, Path, int]:
@@ -35,12 +35,12 @@ async def run_monitor_async(settings: Settings) -> tuple[Path, Path, int]:
                 results = await asyncio.gather(*(scraper.scrape(browser) for scraper in scrapers))
 
 print("\n=== SCRAPER RESULTS ===")
-
 for result in results:
-    print(
-        f"SCRAPER={result.source} "
-        f"TENDERS={len(result.tenders)} "
-        f"ERROR={result.error}"
+    logger.warning(
+        "SCRAPER=%s TENDERS=%s ERROR=%s",
+        result.source,
+        len(result.tenders),
+        result.error,
     )
 
        total_before_dedupe = sum(
