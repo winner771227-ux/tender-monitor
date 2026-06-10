@@ -104,6 +104,14 @@ class BaseScraper(ABC):
                 len(filtered),
             )
 
+            for tender in filtered:
+                logger.warning(
+                     "MATCH %s | %s | %s",
+                    self.source,
+                    tender.title,
+                    tender.published_at,
+                )
+
             return ScrapeResult(
                 source=self.source,
                 tenders=filtered,
