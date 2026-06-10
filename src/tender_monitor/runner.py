@@ -14,8 +14,7 @@ from tender_monitor.exporters import export_excel, export_html
 from tender_monitor.models import ScrapeResult
 from tender_monitor.scrapers import SCRAPER_CLASSES
 
-logger = logging.getLogger(__name__) logging.basicConfig(level=logging.INFO)
-
+logger = logging.getLogger(__name__)
 
 async def run_monitor_async(settings: Settings) -> tuple[Path, Path, int]:
     settings.report_dir.mkdir(parents=True, exist_ok=True)
