@@ -86,7 +86,7 @@ class BaseScraper(ABC):
         try:
             await page.goto(
                 self.url,
-                wait_until="networkidle",
+                wait_until="domcontentloaded",
                 timeout=max(self.timeout_ms, 120000),
             )
 
