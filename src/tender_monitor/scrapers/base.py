@@ -277,7 +277,8 @@ class BaseScraper(ABC):
         )
 
     async def enrich_from_detail(self, page: Page, tender: Tender) -> None:
-        detail_page = await page.context.new_page()
+        context = await page.context.browser.new_context()
+        detail_page = await context.new_page()
         detail_page.set_default_timeout(self.timeout_ms)
         try:
             await detail_page.goto(tender.url, wait_until="domcontentloaded")
@@ -298,7 +299,7 @@ class BaseScraper(ABC):
             if not tender.description:
                 tender.description = text
         finally:
-            await detail_page.close()
+            await context.close()
 
     async def goto_next_page(self, page: Page, visited_urls: set[str]) -> bool:
         next_link = page.locator(NEXT_PAGE_SELECTOR).last
