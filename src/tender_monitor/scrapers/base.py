@@ -10,7 +10,9 @@ from playwright.async_api import Browser, Locator, Page
 from tender_monitor.dedupe import normalize_text
 from tender_monitor.models import ScrapeResult, Tender
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(__name__) logging.basicConfig(
+    level=logging.INFO
+)
 
 DATE_RE = re.compile(
     r"\b(?:\d{1,2}[.]\s*\d{1,2}[.]\s*\d{4}|\d{4}-\d{2}-\d{2})"
@@ -73,32 +75,48 @@ class BaseScraper(ABC):
         self.timeout_ms = timeout_ms
 
     async def scrape(self, browser: Browser) -> ScrapeResult:
+    page = await browser.new_page()
+
+    page.set_default_timeout(
+        max(self.timeout_ms, 120000)
+    )
+
+    try:
         await page.goto(
-    self.url,
-    wait_until="networkidle",
-    timeout=max(self.timeout_ms, 120000),
-)
-        page.set_default_timeout(self.timeout_ms)
-        try:
-            await page.goto(self.url, wait_until="domcontentloaded")
-            tenders = await self.scrape_page(page)
+            self.url,
+            wait_until="networkidle",
+            timeout=max(self.timeout_ms, 120000),
+        )
 
-filtered = self.filter_by_keywords(tenders)
+        tenders = await self.scrape_page(page)
 
-logger.warning(
-    "%s: loaded=%s filtered=%s",
-    self.source,
-    len(tenders),
-    len(filtered),
-)
+        filtered = self.filter_by_keywords(
+            tenders
+        )
 
-return ScrapeResult(
-    source=self.source,
-    tenders=filtered
-)
-        except Exception as exc:  # noqa: BLE001 - scraper failures are isolated per portal
-            logger.exception("Scraper %s failed", self.source)
-            return ScrapeResult(source=self.source, tenders=[], error=str(exc))
+        logger.warning(
+            "%s: loaded=%s filtered=%s",
+            self.source,
+            len(tenders),
+            len(filtered),
+        )
+
+        return ScrapeResult(
+            source=self.source,
+            tenders=filtered,
+        )
+
+    except Exception as exc:
+        logger.exception(
+            "Scraper %s failed",
+            self.source,
+        )
+
+        return ScrapeResult(
+            source=self.source,
+            tenders=[],
+            error=str(exc),
+        )
         finally:
             await page.close()
 
