@@ -26,7 +26,6 @@ class EvezaScraper(BaseScraper):
                     detail_selector=DETAIL_LINK_SELECTOR,
                 )
             )
-            if not await self.goto_next_page(page, visited_urls):
-                break
+            if not await next_button.click()
 
         return self.deduplicate_tenders(tenders)
