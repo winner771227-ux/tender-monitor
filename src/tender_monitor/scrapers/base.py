@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import re
 from abc import ABC, abstractmethod
+from datetime import datetime, timedelta
 from urllib.parse import urljoin
 
 from playwright.async_api import Browser, Locator, Page
@@ -133,7 +134,6 @@ class BaseScraper(ABC):
         )
         return [keyword for keyword in self.keywords if normalize_text(keyword) in haystack]
 
-    from datetime import datetime, timedelta
 
     def filter_by_keywords(self, tenders: list[Tender]) -> list[Tender]:
         from datetime import datetime, timedelta
