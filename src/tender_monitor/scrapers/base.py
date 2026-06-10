@@ -77,7 +77,7 @@ class BaseScraper(ABC):
         self.timeout_ms = timeout_ms
 
     async def scrape(self, browser: Browser) -> ScrapeResult:
-        page = await browser.new_page()
+page = await browser.new_page()
 
 page.set_default_timeout(
     max(self.timeout_ms, 120000)
