@@ -32,15 +32,14 @@ async def run_monitor_async(settings: Settings) -> tuple[Path, Path, int]:
                     for scraper_class in SCRAPER_CLASSES
                 ]
                 results = await asyncio.gather(*(scraper.scrape(browser) for scraper in scrapers))
-
-print("\n=== SCRAPER RESULTS ===")
-for result in results:
-    logger.warning(
-        "SCRAPER=%s TENDERS=%s ERROR=%s",
-        result.source,
-        len(result.tenders),
-        result.error,
-    )
+                print("\n=== SCRAPER RESULTS ===")
+                for result in results:
+                    logger.warning(
+                        "SCRAPER=%s TENDERS=%s ERROR=%s",
+                        result.source,
+                        len(result.tenders),
+                        result.error,
+                        )
 
        total_before_dedupe = sum(
     len(result.tenders)
