@@ -69,7 +69,8 @@ class JosephineScraper(BaseScraper):
         return urljoin(page.url, href)
 
     async def _extract_publication_date(self, page: Page, tender_url: str) -> str | None:
-        detail_page = await page.context.new_page()
+        context = await page.context.browser.new_context()
+        detail_page = await context.new_page()
         detail_page.set_default_timeout(self.timeout_ms)
         try:
             await detail_page.goto(tender_url, wait_until="domcontentloaded")
@@ -79,7 +80,7 @@ class JosephineScraper(BaseScraper):
             dates = _DATE_RE.findall(document_section)
             return min(dates, default=None, key=self._date_sort_key)
         finally:
-            await detail_page.close()
+            await context.close()
 
     @classmethod
     def _build_tender_from_cells(cls, cells: list[str], href: str | None, current_url: str) -> Tender | None:
