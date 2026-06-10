@@ -78,7 +78,20 @@ class BaseScraper(ABC):
         try:
             await page.goto(self.url, wait_until="domcontentloaded")
             tenders = await self.scrape_page(page)
-            return ScrapeResult(source=self.source, tenders=self.filter_by_keywords(tenders))
+
+filtered = self.filter_by_keywords(tenders)
+
+logger.warning(
+    "%s: loaded=%s filtered=%s",
+    self.source,
+    len(tenders),
+    len(filtered),
+)
+
+return ScrapeResult(
+    source=self.source,
+    tenders=filtered
+)
         except Exception as exc:  # noqa: BLE001 - scraper failures are isolated per portal
             logger.exception("Scraper %s failed", self.source)
             return ScrapeResult(source=self.source, tenders=[], error=str(exc))
