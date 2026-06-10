@@ -77,50 +77,53 @@ class BaseScraper(ABC):
         self.timeout_ms = timeout_ms
 
     async def scrape(self, browser: Browser) -> ScrapeResult:
-    page = await browser.new_page()
+page = await browser.new_page()
 
-    page.set_default_timeout(
-        max(self.timeout_ms, 120000)
+```
+page.set_default_timeout(
+    max(self.timeout_ms, 120000)
+)
+
+try:
+    await page.goto(
+        self.url,
+        wait_until="networkidle",
+        timeout=max(self.timeout_ms, 120000),
     )
 
-    try:
-        await page.goto(
-            self.url,
-            wait_until="networkidle",
-            timeout=max(self.timeout_ms, 120000),
-        )
+    tenders = await self.scrape_page(page)
 
-        tenders = await self.scrape_page(page)
+    filtered = self.filter_by_keywords(
+        tenders
+    )
 
-        filtered = self.filter_by_keywords(
-            tenders
-        )
+    logger.warning(
+        "%s: loaded=%s filtered=%s",
+        self.source,
+        len(tenders),
+        len(filtered),
+    )
 
-        logger.warning(
-            "%s: loaded=%s filtered=%s",
-            self.source,
-            len(tenders),
-            len(filtered),
-        )
+    return ScrapeResult(
+        source=self.source,
+        tenders=filtered,
+    )
 
-        return ScrapeResult(
-            source=self.source,
-            tenders=filtered,
-        )
+except Exception as exc:
+    logger.exception(
+        "Scraper %s failed",
+        self.source,
+    )
 
-    except Exception as exc:
-        logger.exception(
-            "Scraper %s failed",
-            self.source,
-        )
+    return ScrapeResult(
+        source=self.source,
+        tenders=[],
+        error=str(exc),
+    )
 
-        return ScrapeResult(
-            source=self.source,
-            tenders=[],
-            error=str(exc),
-        )
-        finally:
-            await page.close()
+finally:
+    await page.close()
+
 
     @abstractmethod
     async def scrape_page(self, page: Page) -> list[Tender]:
