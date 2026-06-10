@@ -136,6 +136,8 @@ class BaseScraper(ABC):
     from datetime import datetime, timedelta
 
     def filter_by_keywords(self, tenders: list[Tender]) -> list[Tender]:
+    from datetime import datetime, timedelta
+
     filtered: list[Tender] = []
 
     cutoff = datetime.now() - timedelta(days=14)
@@ -148,9 +150,20 @@ class BaseScraper(ABC):
 
         if tender.published_at:
             try:
-                published = self.parse_date(tender.published_at)
+                date_text = tender.published_at[:10]
 
-                if published and published < cutoff:
+                if "." in date_text:
+                    published = datetime.strptime(
+                        date_text,
+                        "%d.%m.%Y",
+                    )
+                else:
+                    published = datetime.strptime(
+                        date_text,
+                        "%Y-%m-%d",
+                    )
+
+                if published < cutoff:
                     continue
 
             except Exception:
