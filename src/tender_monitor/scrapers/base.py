@@ -10,7 +10,9 @@ from playwright.async_api import Browser, Locator, Page
 from tender_monitor.dedupe import normalize_text
 from tender_monitor.models import ScrapeResult, Tender
 
-logger = logging.getLogger(__name__) logging.basicConfig(
+logger = logging.getLogger(__name__)
+
+logging.basicConfig(
     level=logging.INFO
 )
 
