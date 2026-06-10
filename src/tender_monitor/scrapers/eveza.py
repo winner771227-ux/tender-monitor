@@ -13,12 +13,29 @@ class EvezaScraper(BaseScraper):
     async def scrape_page(self, page: Page) -> list[Tender]:
         tenders: list[Tender] = []
         visited_urls: set[str] = set()
-        table_xpath = "//table[.//th[contains(normalize-space(.), 'Název') or contains(normalize-space(.), 'Zadavatel')]]"
+
+        table_xpath = (
+            "//table[.//th[contains(normalize-space(.), 'Název') "
+            "or contains(normalize-space(.), 'Zadavatel')]]"
+        )
 
         for _ in range(self.max_pages):
             visited_urls.add(page.url)
-            await page.wait_for_selector("body", state="attached", timeout=self.timeout_ms)
-            tenders.extend(await self.collect_table_tenders(page, table_xpath, detail_selector=DETAIL_LINK_SELECTOR))
+
+            await page.wait_for_selector(
+                "body",
+                state="attached",
+                timeout=self.timeout_ms,
+            )
+
+            tenders.extend(
+                await self.collect_table_tenders(
+                    page,
+                    table_xpath,
+                    detail_selector=DETAIL_LINK_SELECTOR,
+                )
+            )
+
             tenders.extend(
                 await self.collect_card_tenders(
                     page,
@@ -26,6 +43,7 @@ class EvezaScraper(BaseScraper):
                     detail_selector=DETAIL_LINK_SELECTOR,
                 )
             )
-            if not await next_button.click():
+
+            break
 
         return self.deduplicate_tenders(tenders)
