@@ -158,20 +158,25 @@ class BaseScraper(ABC):
 
             if tender.published_at:
                 try:
-                    date_text = tender.published_at[:10]
+                    date_text = tender.published_at.strip()
 
-                    if "." in date_text:
-                        published = datetime.strptime(
-                            date_text,
-                            "%d.%m.%Y",
-                        )
-                    else:
-                        published = datetime.strptime(
-                            date_text,
-                            "%Y-%m-%d",
-                        )
+                    published = None
 
-                    if published < cutoff:
+                    for fmt in (
+                        "%d.%m.%Y",
+                        "%d.%m.%Y %H:%M",
+                        "%d. %m. %Y",
+                        "%d. %m. %Y %H:%M",
+                        "%Y-%m-%d",
+                        "%Y-%m-%d %H:%M:%S",
+                    ):
+                        try:
+                            published = datetime.strptime(date_text[:19], fmt)
+                            break
+                        except ValueError:
+                            pass
+
+                    if published and published < cutoff:
                         continue
 
                 except Exception:
