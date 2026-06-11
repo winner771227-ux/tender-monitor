@@ -31,6 +31,10 @@ class JosephineScraper(BaseScraper):
                 cells = [self._clean_text(await cell.inner_text()) for cell in await row.locator("td").all()]
                 tender_link = row.locator("a[href*='/tender/'][href*='/summary']").first
                 href = await tender_link.get_attribute("href") if await tender_link.count() else None
+                
+                if href and "78046" in href:
+                    logger.warning("FOUND TENDER 78046 IN LIST")
+                    
                 tender = self._build_tender_from_cells(cells, href, page.url)
                 
                 if tender:
