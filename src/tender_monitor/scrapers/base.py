@@ -231,7 +231,7 @@ class BaseScraper(ABC):
             )
             if tender is None:
                 continue
-            if open_detail and self.keyword_matches(tender):
+            if open_detail:
                 await self.enrich_from_detail(page, tender)
             tenders.append(tender)
         return self.deduplicate_tenders(tenders)
@@ -273,7 +273,7 @@ class BaseScraper(ABC):
                 external_id=self.detect_external_id(text.splitlines()),
                 description=text,
             )
-            if open_detail and self.keyword_matches(tender):
+            if open_detail:
                 await self.enrich_from_detail(page, tender)
             tenders.append(tender)
         return self.deduplicate_tenders(tenders)
