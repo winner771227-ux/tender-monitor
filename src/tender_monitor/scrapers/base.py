@@ -157,6 +157,8 @@ class BaseScraper(ABC):
                 continue
 
             if not tender.published_at:
+                tender.matched_keywords = matches
+                filtered.append(tender)
                 continue
 
             date_text = tender.published_at.strip()
