@@ -156,31 +156,34 @@ class BaseScraper(ABC):
             if not matches:
                 continue
 
-            if tender.published_at:
+             # Bez data zakázku zahodíme
+            if not tender.published_at:
+                continue
+
+            date_text = tender.published_at.strip()
+    
+        published = None
+
+            for fmt in (
+                "%d.%m.%Y",
+                "%d.%m.%Y %H:%M",
+                "%d.%m.%Y %H:%M:%S",
+                "%Y-%m-%d",
+                "%Y-%m-%d %H:%M:%S",
+            ):
                 try:
-                    date_text = tender.published_at.strip()
-
-                    published = None
-
-                    for fmt in (
-                        "%d.%m.%Y",
-                        "%d.%m.%Y %H:%M",
-                        "%d. %m. %Y",
-                        "%d. %m. %Y %H:%M",
-                        "%Y-%m-%d",
-                        "%Y-%m-%d %H:%M:%S",
-                    ):
-                        try:
-                            published = datetime.strptime(date_text[:19], fmt)
-                            break
-                        except ValueError:
-                            pass
-
-                    if published and published < cutoff:
-                        continue
-
-                except Exception:
+                    published = datetime.strptime(date_text[:19], fmt)
+                    break
+                except ValueError:
                     pass
+
+            # Nepodařilo se přečíst datum → zahodit
+            if not published:
+                continue
+
+            # Starší než 14 dní → zahodit
+            if published < cutoff:
+                continue
 
             tender.matched_keywords = matches
             filtered.append(tender)
