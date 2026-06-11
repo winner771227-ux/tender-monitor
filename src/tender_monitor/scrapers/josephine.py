@@ -30,6 +30,13 @@ class JosephineScraper(BaseScraper):
                 tender_link = row.locator("a[href*='/tender/'][href*='/summary']").first
                 href = await tender_link.get_attribute("href") if await tender_link.count() else None
                 tender = self._build_tender_from_cells(cells, href, page.url)
+                
+                if tender:
+                    logger.warning(
+                        "RAW JOSEPHINE | %s",
+                        tender.title,
+                    )
+                    
                 if tender is None or not self.keyword_matches(tender):
                     continue
                 tender.published_at = await self._extract_publication_date(page, tender.url)
