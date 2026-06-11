@@ -80,11 +80,19 @@ class JosephineScraper(BaseScraper):
 
     async def _next_page_url(self, page: Page) -> str | None:
         next_link = page.locator("a:has-text('Další'), a:has-text('Next')").last
+
+        logger.warning("NEXT LINK COUNT=%s", await next_link.count())
+
         if not await next_link.count():
             return None
+
         href = await next_link.get_attribute("href")
+
+        logger.warning("NEXT HREF=%s", href)
+
         if not href or href in {"#", page.url}:
             return None
+
         return urljoin(page.url, href)
 
     async def _extract_publication_date(self, page: Page, tender_url: str) -> str | None:
