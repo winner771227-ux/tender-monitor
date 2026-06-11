@@ -235,6 +235,12 @@ class BaseScraper(ABC):
                 continue
             if open_detail:
                 await self.enrich_from_detail(page, tender)
+            logger.warning(
+                "RAW %s | %s | %s",
+                self.source,
+                tender.title,
+                tender.published_at,
+            )
             tenders.append(tender)
         return self.deduplicate_tenders(tenders)
 
