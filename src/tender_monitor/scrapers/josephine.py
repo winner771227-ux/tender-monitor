@@ -23,6 +23,9 @@ class JosephineScraper(BaseScraper):
         visited_urls: set[str] = set()
 
         while page.url not in visited_urls:
+
+            logger.warning("VISITING %s", page.url)
+            
             visited_urls.add(page.url)
             await self._wait_for_tender_table(page)
             rows = await self._tender_rows(page)
