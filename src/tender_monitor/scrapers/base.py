@@ -156,13 +156,12 @@ class BaseScraper(ABC):
             if not matches:
                 continue
 
-             # Bez data zakázku zahodíme
             if not tender.published_at:
                 continue
 
             date_text = tender.published_at.strip()
-    
-        published = None
+
+            published = None
 
             for fmt in (
                 "%d.%m.%Y",
@@ -177,11 +176,9 @@ class BaseScraper(ABC):
                 except ValueError:
                     pass
 
-            # Nepodařilo se přečíst datum → zahodit
             if not published:
                 continue
 
-            # Starší než 14 dní → zahodit
             if published < cutoff:
                 continue
 
