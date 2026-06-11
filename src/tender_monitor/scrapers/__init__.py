@@ -9,8 +9,6 @@ from tender_monitor.scrapers.tender_market import TenderMarketScraper
 
 SCRAPER_CLASSES = (
     JosephineScraper,
-    NenScraper,
-    # EvezaScraper,
     TenderMarketScraper,
     TenderArenaScraper,
     EZakazkyScraper,
