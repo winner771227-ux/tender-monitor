@@ -11,9 +11,13 @@ DEFAULT_KEYWORDS = (
     "bourání",
     "odstranění stavby",
     "odstranění staveb",
-    "demoliční práce",
+    "odstranění budovy",
     "odstranění objektu",
+    "demoliční práce",
+    "demoliční",
     "likvidace stavby",
+    "likvidace objektu",
+    "odstranění",
 )
 
 
