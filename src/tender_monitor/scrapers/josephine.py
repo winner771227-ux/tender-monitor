@@ -55,7 +55,7 @@ class JosephineScraper(BaseScraper):
                 )
                 
                 if href and "78046" in href:
-                    #logger.warning("FOUND TENDER 78046 IN LIST")
+                    pass
                     
                 tender = self._build_tender_from_cells(
                     cells,
@@ -64,11 +64,7 @@ class JosephineScraper(BaseScraper):
                 )
                 
                 if tender and tender.external_id == "78046":
-                    #logger.warning(
-                        "78046 JOSEPHINE MATCHES=%s TITLE=%s",
-                        self.keyword_matches(tender),
-                        tender.title,
-                    )
+                    pass
     
                 if tender is None or not self.keyword_matches(tender):
                     continue
