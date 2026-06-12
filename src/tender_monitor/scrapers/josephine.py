@@ -142,8 +142,18 @@ class JosephineScraper(BaseScraper):
         external_id = cls._first_line(cells[0])
         title = cls._first_line(cells[2])
         authority = cls._first_line(cells[4])
+
+        country = cls._first_line(cells[5]).upper()
+
+        if not country.startswith("CZ"):
+            return None
+        
         deadline = cls._first_date(cells[6])
-        tender_url = urljoin(current_url, href) if href else cls._summary_url_from_id(current_url, external_id)
+        
+        tender_url = ( 
+            urljoin(current_url, href) 
+            if href 
+            else cls._summary_url_from_id(current_url, external_id)
 
         if not title or not tender_url:
             return None
