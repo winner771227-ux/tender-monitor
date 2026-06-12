@@ -63,7 +63,7 @@ class JosephineScraper(BaseScraper):
                     tender.url,
                 )
 
-                 tenders.append(tender)
+                tenders.append(tender)
 
             next_url = await self._next_page_url(page)
             if not next_url or next_url in visited_urls:
