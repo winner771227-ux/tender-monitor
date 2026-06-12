@@ -42,9 +42,6 @@ class JosephineScraper(BaseScraper):
                     self._clean_text(await cell.inner_text()) 
                     for cell in await row.locator("td").all()
                 ]
-
-                if len(cells) >= 5 and "CZ" not in cells[4]:
-                    continue
                 
                 logger.warning(
                     "JOSEPHINE CELLS %s",
