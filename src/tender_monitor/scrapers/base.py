@@ -183,8 +183,19 @@ class BaseScraper(ABC):
             if not published:
                 continue
 
+            logger.warning(
+                "DATECHECK %s | published=%s | cutoff=%s",
+                tender.title,
+                published,
+                cutoff,
+            )
+
             if published < cutoff:
+                logger.warning("SKIPPING OLD %s", tender.title)
                 continue
+
+            if not published:
+                logger.warning("NO DATE %s", tender.title)
 
             tender.matched_keywords = matches
             filtered.append(tender)
