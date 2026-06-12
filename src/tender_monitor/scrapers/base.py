@@ -153,6 +153,14 @@ class BaseScraper(ABC):
         for tender in tenders:
             matches = self.keyword_matches(tender)
 
+            if "archivu nemocnice" in tender.title.lower():
+                logger.warning(
+                    "DEBUG STERNBERK title=%s published=%s matches=%s",
+                    tender.title,
+                    tender.published_at,
+                    matches,
+            )
+
             if not matches:
                 continue
 
@@ -186,6 +194,13 @@ class BaseScraper(ABC):
             logger.warning(
                 "DATECHECK %s | published=%s | cutoff=%s",
                 tender.title,
+                published,
+                cutoff,
+            )
+
+            if "archivu nemocnice" in tender.title.lower():
+                logger.warning(
+                "DEBUG STERNBERK DATE published=%s cutoff=%s",
                 published,
                 cutoff,
             )
