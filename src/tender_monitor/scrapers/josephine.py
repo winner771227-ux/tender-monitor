@@ -161,15 +161,9 @@ class JosephineScraper(BaseScraper):
 
         external_id = cls._first_line(cells[0])
         title = cls._first_line(cells[2])
-        authority = cls._first_line(cells[4])
-
-        location_text = cells[5].upper()
-
-        if "CZ" not in location_text:
-            logger.warning("SKIP NON-CZ %s", cells)
-            return None
-        
-        deadline = cls._first_date(cells[6])
+        authority = cls._first_line(cells[5])
+      
+        deadline = cls._first_date(cells[7])
         
         tender_url = ( 
             urljoin(current_url, href) 
