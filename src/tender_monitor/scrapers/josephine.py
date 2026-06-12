@@ -20,6 +20,8 @@ class JosephineScraper(BaseScraper):
     url = "https://josephine.proebiz.com/cs/public-tenders/all"
 
     async def scrape_page(self, page: Page) -> list[Tender]:
+        logger.warning("JOSEPHINE START")
+        
         tenders: list[Tender] = []
         visited_urls: set[str] = set()
 
