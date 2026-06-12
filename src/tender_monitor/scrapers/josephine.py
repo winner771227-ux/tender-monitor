@@ -21,35 +21,26 @@ class JosephineScraper(BaseScraper):
     url = "https://josephine.proebiz.com/cs/public-tenders/all"
 
     async def scrape_page(self, page: Page) -> list[Tender]:
-        logger.warning("JOSEPHINE START")
+        
         
         tenders: list[Tender] = []
         visited_urls: set[str] = set()
 
         while page.url not in visited_urls:
 
-            #logger.warning("VISITING %s", page.url)
+            
             
             visited_urls.add(page.url)
             await self._wait_for_tender_table(page)
             rows = await self._tender_rows(page)
-
-            logger.warning(
-                "JOSEPHINE PAGE %s ROWS=%s", 
-                page.url, 
-                len(rows)
-            )
-
+            
             for row in rows:
                 cells = [
                     self._clean_text(await cell.inner_text()) 
                     for cell in await row.locator("td").all()
                 ]
                 
-                logger.warning(
-                    "JOSEPHINE CELLS %s",
-                    cells
-                )
+                
                 
                 tender_link = row.locator(
                     "a[href*='/tender/'][href*='/summary']"
@@ -66,14 +57,7 @@ class JosephineScraper(BaseScraper):
                     href,
                     page.url,
                 )
-
-                if tender:
-                    logger.warning(
-                        "TENDER CREATED id=%s title=%s",
-                        tender.external_id,
-                        tender.title,
-                    )
-                
+                               
                 if tender is None or not self.keyword_matches(tender):
                     continue
 
@@ -83,9 +67,7 @@ class JosephineScraper(BaseScraper):
                 )
 
                 tenders.append(tender)
-
-                if tender.external_id == "78046":
-                    logger.warning("78046 APPENDED TO TENDERS")
+              
 
             next_url = await self._next_page_url(page)
             if not next_url or next_url in visited_urls:
@@ -114,15 +96,13 @@ class JosephineScraper(BaseScraper):
     async def _next_page_url(self, page: Page) -> str | None:
         next_link = page.locator("a:has-text('Další'), a:has-text('Next')").last
 
-        logger.warning("NEXT LINK COUNT=%s", await next_link.count())
-
+        
         if not await next_link.count():
             return None
 
         href = await next_link.get_attribute("href")
 
-        logger.warning("NEXT HREF=%s", href)
-
+        
         if not href or href in {"#", page.url}:
             return None
 
@@ -144,26 +124,15 @@ class JosephineScraper(BaseScraper):
 
     @classmethod
     def _build_tender_from_cells(cls, cells: list[str], href: str | None, current_url: str) -> Tender | None:
-
-        logger.warning(
-            "BUILD id=%s len=%s href=%s",
-            cells[0] if cells else "NONE",
-            len(cells),
-            href,
-        )
         
-        if len(cells) < 7:
-            logger.warning(
-                "BUILD FAIL LEN %s",
-                cells,
-            )
+        if len(cells) < 9:
             return None
 
         external_id = cls._first_line(cells[0])
         title = cls._first_line(cells[2])
         authority = cls._first_line(cells[5])
       
-        deadline = cls._first_date(cells[7])
+        deadline = cls._first_date(cells[8])
         
         tender_url = ( 
             urljoin(current_url, href) 
@@ -172,12 +141,6 @@ class JosephineScraper(BaseScraper):
         )
 
         if not title or not tender_url:
-            logger.warning(
-                "BUILD FAIL TITLE=%s URL=%s ID=%s",
-                title,
-                tender_url,
-                external_id,
-            )
             return None
 
         return Tender(
