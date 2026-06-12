@@ -65,6 +65,13 @@ class JosephineScraper(BaseScraper):
                     href,
                     page.url,
                 )
+
+                if tender:
+                    logger.warning(
+                        "TENDER CREATED id=%s title=%s",
+                        tender.external_id,
+                        tender.title,
+                    )
                 
                 if tender is None or not self.keyword_matches(tender):
                     continue
