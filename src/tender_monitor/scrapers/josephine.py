@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+logger = logging.getLogger(__name__)
+
 import re
 from urllib.parse import urljoin
 
@@ -12,7 +14,6 @@ from tender_monitor.scrapers.base import BaseScraper
 
 _DATE_RE = re.compile(r"\b\d{2}\.\d{2}\.\d{4}(?:\s+\d{2}:\d{2}:\d{2})?\b")
 
-logger = logging.getLogger(__name__)
 
 class JosephineScraper(BaseScraper):
     source = "JOSEPHINE"
@@ -43,17 +44,12 @@ class JosephineScraper(BaseScraper):
                     
                 tender = self._build_tender_from_cells(cells, href, page.url)
                 
-                if tender:
-                    logger.warning(
-                        "RAW JOSEPHINE | %s",
-                        tender.title,
-                    )
-
                 if tender and tender.external_id == "78046":
                     logger.warning(
-                        "78046 BEFORE FILTER matches=%s",
+                        "78046 JOSEPHINE MATCHES=%s TITLE=%s",
                         self.keyword_matches(tender),
-                )
+                        tender.title,
+                    )
     
                 if tender is None or not self.keyword_matches(tender):
                     continue
