@@ -137,9 +137,9 @@ class JosephineScraper(BaseScraper):
         title = cls._first_line(cells[2])
         authority = cls._first_line(cells[4])
 
-        country = cls._first_line(cells[5]).upper()
+        location_text = cells[5].upper()
 
-        if not country.startswith("CZ"):
+        if "CZ" not in location_text:
             return None
         
         deadline = cls._first_date(cells[6])
