@@ -163,9 +163,6 @@ class BaseScraper(ABC):
                     tender.published_at,
             )
 
-    if not matches:
-        continue
-
             if not matches:
                 continue
 
