@@ -157,10 +157,9 @@ class BaseScraper(ABC):
 
             if "archivu nemocnice" in tender.title.lower():
                 logger.warning(
-                    "DEBUG STERNBERK title=%s published=%s matches=%s",
+                    "KEYWORD TEST title=%s matches=%s",
                     tender.title,
-                    tender.published_at,
-                    matches,
+                    [keyword for keyword in self.keywords if normalize_text(keyword) in haystack],
             )
 
             if not matches:
