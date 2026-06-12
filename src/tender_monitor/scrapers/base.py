@@ -157,11 +157,11 @@ class BaseScraper(ABC):
 
             if tender.external_id == "78046":
                 logger.warning(
-                    "78046 DEBUG matches=%s title=%s published=%s",
-                    matches,
+                    "78046 FILTER title=%s published=%s matches=%s",
                     tender.title,
                     tender.published_at,
-            )
+                    matches,
+                )
 
             if not matches:
                 continue
