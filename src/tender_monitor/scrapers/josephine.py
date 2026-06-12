@@ -166,7 +166,7 @@ class JosephineScraper(BaseScraper):
         location_text = cells[5].upper()
 
         if "CZ" not in location_text:
-            logger.warning("BUILD FAIL LEN %s", cells)
+            logger.warning("SKIP NON-CZ %s", cells)
             return None
         
         deadline = cls._first_date(cells[6])
