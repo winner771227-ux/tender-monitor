@@ -42,7 +42,11 @@ class JosephineScraper(BaseScraper):
                 if href and "78046" in href:
                     logger.warning("FOUND TENDER 78046 IN LIST")
                     
-                tender = self._build_tender_from_cells(cells, href, page.url)
+                tender = self._build_tender_from_cells(
+                    cells,
+                    href,
+                    page.url,
+                )
                 
                 if tender and tender.external_id == "78046":
                     logger.warning(
@@ -53,6 +57,13 @@ class JosephineScraper(BaseScraper):
     
                 if tender is None or not self.keyword_matches(tender):
                     continue
+
+                tender.published_at = await self._extract_publication_date(
+                    page,
+                    tender.url,
+                )
+
+                 tenders.append(tender)
 
             next_url = await self._next_page_url(page)
             if not next_url or next_url in visited_urls:
