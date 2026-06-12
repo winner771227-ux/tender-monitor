@@ -25,13 +25,13 @@ class JosephineScraper(BaseScraper):
 
         while page.url not in visited_urls:
 
-            logger.warning("VISITING %s", page.url)
+            #logger.warning("VISITING %s", page.url)
             
             visited_urls.add(page.url)
             await self._wait_for_tender_table(page)
             rows = await self._tender_rows(page)
 
-            logger.warning("JOSEPHINE PAGE %s ROWS=%s", page.url, len(rows))
+            #logger.warning("JOSEPHINE PAGE %s ROWS=%s", page.url, len(rows))
 
             for row in rows:
                 cells = [
@@ -42,7 +42,7 @@ class JosephineScraper(BaseScraper):
                 if len(cells) >= 5 and "CZ" not in cells[4]:
                     continue
                 
-                logger.warning("JOSEPHINE CELLS %s", cells)
+                #logger.warning("JOSEPHINE CELLS %s", cells)
                 
                 tender_link = row.locator(
                     "a[href*='/tender/'][href*='/summary']"
@@ -55,7 +55,7 @@ class JosephineScraper(BaseScraper):
                 )
                 
                 if href and "78046" in href:
-                    logger.warning("FOUND TENDER 78046 IN LIST")
+                    #logger.warning("FOUND TENDER 78046 IN LIST")
                     
                 tender = self._build_tender_from_cells(
                     cells,
@@ -64,7 +64,7 @@ class JosephineScraper(BaseScraper):
                 )
                 
                 if tender and tender.external_id == "78046":
-                    logger.warning(
+                    #logger.warning(
                         "78046 JOSEPHINE MATCHES=%s TITLE=%s",
                         self.keyword_matches(tender),
                         tender.title,
