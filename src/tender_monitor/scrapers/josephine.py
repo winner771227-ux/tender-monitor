@@ -35,9 +35,14 @@ class JosephineScraper(BaseScraper):
 
             for row in rows:
                 cells = [self._clean_text(await cell.inner_text()) for cell in await row.locator("td").all()]
+
+                if len(cells) >= 5:
+                    country_info = cells[4]
+
+                    if "CZ" not in country_info:
+                        continue
+
                 logger.warning("JOSEPHINE CELLS %s", cells)
-                tender_link = row.locator("a[href*='/tender/'][href*='/summary']").first
-                href = await tender_link.get_attribute("href") if await tender_link.count() else None
                 
                 if href and "78046" in href:
                     logger.warning("FOUND TENDER 78046 IN LIST")
