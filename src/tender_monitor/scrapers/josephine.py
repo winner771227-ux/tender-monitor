@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+
 logger = logging.getLogger(__name__)
 
 import re
@@ -152,6 +153,10 @@ class JosephineScraper(BaseScraper):
         )
         
         if len(cells) < 7:
+            logger.warning(
+                "BUILD FAIL LEN %s",
+                cells,
+            )
             return None
 
         external_id = cls._first_line(cells[0])
