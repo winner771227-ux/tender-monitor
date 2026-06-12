@@ -65,6 +65,9 @@ class JosephineScraper(BaseScraper):
 
                 tenders.append(tender)
 
+                if tender.external_id == "78046":
+                    logger.warning("78046 APPENDED TO TENDERS")
+
             next_url = await self._next_page_url(page)
             if not next_url or next_url in visited_urls:
                 break
