@@ -34,13 +34,19 @@ class JosephineScraper(BaseScraper):
             await self._wait_for_tender_table(page)
             rows = await self._tender_rows(page)
             
+            logger.warning(
+                "JOSEPHINE PAGE %s ROWS=%s",
+                page.url,
+                len(rows),
+            )
+
             for row in rows:
                 cells = [
                     self._clean_text(await cell.inner_text()) 
                     for cell in await row.locator("td").all()
                 ]
                 
-                
+                logger.warning("JOSEPHINE CELLS %s", cells)
                 
                 tender_link = row.locator(
                     "a[href*='/tender/'][href*='/summary']"
@@ -57,7 +63,12 @@ class JosephineScraper(BaseScraper):
                     href,
                     page.url,
                 )
-                               
+
+                logger.warning(
+                    "TENDER=%s",
+                    tender,
+                )
+
                 if tender is None or not self.keyword_matches(tender):
                     continue
 
