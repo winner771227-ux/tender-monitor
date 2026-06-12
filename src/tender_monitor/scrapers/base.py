@@ -146,8 +146,10 @@ class BaseScraper(ABC):
     def filter_by_keywords(self, tenders: list[Tender]) -> list[Tender]:
         from datetime import datetime, timedelta
 
+        logger.warning("FILTER CALLED %s", len(tenders))
+        
         filtered: list[Tender] = []
-
+        
         cutoff = datetime.now() - timedelta(days=14)
 
         for tender in tenders:
