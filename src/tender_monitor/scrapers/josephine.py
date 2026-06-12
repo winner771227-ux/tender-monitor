@@ -53,19 +53,13 @@ class JosephineScraper(BaseScraper):
                     if await tender_link.count()
                     else None
                 )
-                
-                if href and "78046" in href:
-                    pass
-                    
+                                   
                 tender = self._build_tender_from_cells(
                     cells,
                     href,
                     page.url,
                 )
                 
-                if tender and tender.external_id == "78046":
-                    pass
-    
                 if tender is None or not self.keyword_matches(tender):
                     continue
 
