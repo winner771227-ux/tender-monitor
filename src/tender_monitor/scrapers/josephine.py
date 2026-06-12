@@ -148,6 +148,7 @@ class JosephineScraper(BaseScraper):
             urljoin(current_url, href) 
             if href 
             else cls._summary_url_from_id(current_url, external_id)
+        )
 
         if not title or not tender_url:
             return None
