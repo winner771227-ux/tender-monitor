@@ -31,7 +31,11 @@ class JosephineScraper(BaseScraper):
             await self._wait_for_tender_table(page)
             rows = await self._tender_rows(page)
 
-            #logger.warning("JOSEPHINE PAGE %s ROWS=%s", page.url, len(rows))
+            logger.warning(
+                "JOSEPHINE PAGE %s ROWS=%s", 
+                page.url, 
+                len(rows)
+            )
 
             for row in rows:
                 cells = [
@@ -42,7 +46,10 @@ class JosephineScraper(BaseScraper):
                 if len(cells) >= 5 and "CZ" not in cells[4]:
                     continue
                 
-                #logger.warning("JOSEPHINE CELLS %s", cells)
+                logger.warning(
+                    "JOSEPHINE CELLS %s",
+                    cells
+                )
                 
                 tender_link = row.locator(
                     "a[href*='/tender/'][href*='/summary']"
