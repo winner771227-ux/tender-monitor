@@ -143,6 +143,14 @@ class JosephineScraper(BaseScraper):
 
     @classmethod
     def _build_tender_from_cells(cls, cells: list[str], href: str | None, current_url: str) -> Tender | None:
+
+        logger.warning(
+            "BUILD id=%s len=%s href=%s",
+            cells[0] if cells else "NONE",
+            len(cells),
+            href,
+        )
+        
         if len(cells) < 7:
             return None
 
@@ -153,6 +161,7 @@ class JosephineScraper(BaseScraper):
         location_text = cells[5].upper()
 
         if "CZ" not in location_text:
+            logger.warning("BUILD FAIL LEN %s", cells
             return None
         
         deadline = cls._first_date(cells[6])
@@ -164,6 +173,12 @@ class JosephineScraper(BaseScraper):
         )
 
         if not title or not tender_url:
+            logger.warning(
+                "BUILD FAIL TITLE=%s URL=%s ID=%s",
+                title,
+                tender_url,
+                external_id,
+            )
             return None
 
         return Tender(
