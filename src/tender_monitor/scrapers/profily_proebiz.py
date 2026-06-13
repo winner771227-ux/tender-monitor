@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 from playwright.async_api import Page
 
 from tender_monitor.models import Tender
