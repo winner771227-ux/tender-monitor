@@ -41,6 +41,11 @@ async def run_monitor_async(settings: Settings) -> tuple[Path, Path, int]:
                     for scraper_class in SCRAPER_CLASSES
                 ]
 
+                tasks = [
+                    scraper.scrape(browser)
+                    for scraper in scrapers
+                ]
+
                 results = await asyncio.gather(
                     *tasks
                 )
