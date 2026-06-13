@@ -92,6 +92,11 @@ class JosephineScraper(BaseScraper):
                 break
             await page.goto(next_url, wait_until="domcontentloaded")
 
+            logger.warning(
+                "JOSEPHINE RETURNING %s TENDERS",
+                len(tenders),
+            )
+
         return tenders
 
     def keyword_matches(self, tender: Tender) -> list[str]:
