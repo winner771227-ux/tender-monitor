@@ -68,7 +68,6 @@ class JosephineScraper(BaseScraper):
                     "TENDER=%s",
                     tender,
                 )
-                def _build_tender_from_cells()
 
                 if tender is None or not self.keyword_matches(tender):
                     continue
