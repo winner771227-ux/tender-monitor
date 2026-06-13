@@ -142,25 +142,40 @@ class JosephineScraper(BaseScraper):
         current_url: str
     ) -> Tender | None:
 
-        logger.warning("BUILD CELLS=%s", cells)
+        logger.warning(
+            "BUILD LEN=%s CELLS=%s",
+            en(cells),
+            cells,
+        )
         
-        if len(cells) < 9:
-            logger.warning("RETURN NONE LEN=%s", len(cells))
+        if len(cells) < 7:
+            logger.warning("RETURN NONE: TOO FEW CELLS")
             return None
-
+    try:
         external_id = cls._first_line(cells[0])
         title = cls._first_line(cells[2])
-        authority = cls._first_line(cells[5])
+
+        authority = (
+            cls._first_line(cells[5])
+            if.len(cells) > 5
+            else ""
+        )
+
+        deadline = (
+            cls._first_date(cells[8])
+            if len(cells) > 8
+            else None
+        )
 
         logger.warning(
             "PARSED id=%s title=%s authority=%s",
             external_id,
             title,
             authority,
+            deadline,
         )
 
-        deadline = cls._first_date(cells[8])
-        
+                
         tender_url = ( 
             urljoin(current_url, href) 
             if href 
@@ -168,22 +183,19 @@ class JosephineScraper(BaseScraper):
         )
 
         logger.warning(
-            "URL=%s DEADLINE=%s",
+            "URL=%s",
             tender_url,
-            deadline,
-        )
+       )
 
-        if not title or not tender_url:
-            logger.warning(
-                "RETURN NONE TITLE=%s URL=%s",
-                title,
-                tender_url,
-            )
+        if not title:
+            logger.warning("RETURN NONE: EMPTY TITLE"),
             return None
 
-        logger.warning("BUILD SUCCESS %s", external_id)
+        if not tender_url:
+            logger.warning("RETURN NONE: EMPTY URL")
+            return None
 
-        return Tender(
+        tender = Tender(
             source=cls.source,
             title=title,
             url=tender_url,
@@ -191,6 +203,20 @@ class JosephineScraper(BaseScraper):
             deadline_at=deadline,
             external_id=external_id or None,
         )
+
+        logger.warning(
+            "BUILD SUCCESS ID=%s",
+            external_id,
+        )
+
+        return tender
+
+    except Exception as exc:
+        logger.exception(
+            "BUILD FAILED EXCEPTION: %s",
+            exc,
+        )
+        return None        
 
     @staticmethod
     def _summary_url_from_id(current_url: str, external_id: str) -> str | None:
