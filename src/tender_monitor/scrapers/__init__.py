@@ -6,14 +6,18 @@ from tender_monitor.scrapers.profil_zadavatele_vz import ProfilZadavateleVzScrap
 from tender_monitor.scrapers.profily_proebiz import ProfilyProebizScraper
 from tender_monitor.scrapers.tender_arena import TenderArenaScraper
 from tender_monitor.scrapers.tender_market import TenderMarketScraper
+from tender_monitor.scrapers.vvz import VvzScraper
 
 SCRAPER_CLASSES = (
     JosephineScraper,
-    #TenderMarketScraper,
-    #TenderArenaScraper,
-    #EZakazkyScraper,
-    #ProfilyProebizScraper,
-    #ProfilZadavateleVzScraper,
+    NenScraper,
+    TenderMarketScraper,
+    TenderArenaScraper,
+    EZakazkyScraper,
+    ProfilyProebizScraper,
+    ProfilZadavateleVzScraper,
+    VvzScraper,
+    # EvezaScraper,  # eveza.cz – záložní, občas nedostupné
 )
 
 __all__ = [
@@ -26,4 +30,5 @@ __all__ = [
     "ProfilyProebizScraper",
     "TenderArenaScraper",
     "TenderMarketScraper",
+    "VvzScraper",
 ]
