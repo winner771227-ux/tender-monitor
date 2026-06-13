@@ -156,18 +156,31 @@ class JosephineScraper(BaseScraper):
     ) -> Tender | None:
 
         if len(cells) < 7:
-        return None
+            return None
 
         external_id = cls._first_line(cells[0])
-        title = cls._first_line(cells[2])
-        authority = cls._first_line(cells[4])
 
-        deadline = cls._first_date(cells[6])
+        title = cls._first_line(cells[2])
+
+        authority = (
+            cls._first_line(cells[5])
+            if len(cells) > 5
+            else ""
+        )
+
+        deadline = (
+            cls._first_date(cells[8])
+            if len(cells) > 8
+            else None
+        )
 
         tender_url = (
             urljoin(current_url, href)
             if href
-            else cls._summary_url_from_id(current_url, external_id)
+            else cls._summary_url_from_id(
+                current_url,
+                external_id,
+            )
         )
 
         if not title or not tender_url:
