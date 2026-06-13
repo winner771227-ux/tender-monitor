@@ -210,13 +210,6 @@ class JosephineScraper(BaseScraper):
 
         return tender
 
-    except Exception as exc:
-        logger.exception(
-            "BUILD FAILED EXCEPTION: %s",
-            exc,
-        )
-        return None        
-
     @staticmethod
     def _summary_url_from_id(current_url: str, external_id: str) -> str | None:
         if not external_id.isdigit():
