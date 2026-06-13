@@ -136,22 +136,22 @@ class JosephineScraper(BaseScraper):
 
     @classmethod
     def _build_tender_from_cells(
-        cls, 
-        cells: list[str], 
-        href: str | None, 
-        current_url: str
+        cls,
+        cells: list[str],
+        href: str | None,
+        current_url: str,
     ) -> Tender | None:
 
         logger.warning(
             "BUILD LEN=%s CELLS=%s",
-            en(cells),
+            len(cells),
             cells,
         )
-        
+
         if len(cells) < 7:
             logger.warning("RETURN NONE: TOO FEW CELLS")
             return None
-    try:
+
         external_id = cls._first_line(cells[0])
         title = cls._first_line(cells[2])
 
@@ -168,24 +168,23 @@ class JosephineScraper(BaseScraper):
         )
 
         logger.warning(
-            "PARSED id=%s title=%s authority=%s",
+            "PARSED id=%s title=%s authority=%s deadline=%s",
             external_id,
             title,
             authority,
             deadline,
         )
 
-                
-        tender_url = ( 
-            urljoin(current_url, href) 
-            if href 
+        tender_url = (
+            urljoin(current_url, href)
+            if href
             else cls._summary_url_from_id(current_url, external_id)
         )
 
         logger.warning(
             "URL=%s",
             tender_url,
-       )
+        )
 
         if not title:
             logger.warning("RETURN NONE: EMPTY TITLE")
@@ -205,7 +204,7 @@ class JosephineScraper(BaseScraper):
         )
 
         logger.warning(
-            "BUILD SUCCESS ID=%s",
+            "BUILD SUCCESS id=%s",
             external_id,
         )
 
