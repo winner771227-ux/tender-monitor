@@ -157,7 +157,7 @@ class JosephineScraper(BaseScraper):
 
         authority = (
             cls._first_line(cells[5])
-            if.len(cells) > 5
+            if len(cells) > 5
             else ""
         )
 
