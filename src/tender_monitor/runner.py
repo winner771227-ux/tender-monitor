@@ -52,14 +52,14 @@ async def run_monitor_async(settings: Settings) -> tuple[Path, Path, int]:
 
                 for result in results:
                     print(
-                        f"SCRAPER={result.source} "
-                        f"TENDERS={len(result.tenders)} "
+                        f"RUNNER RESULT: {result.source} "
+                        f"COUNT={len(result.tenders)} "
                         f"ERROR={result.error}"
-                )
+                    )
 
                     for tender in result.tenders:
                         print(
-                            f"FOUND {result.source}: {tender.title}"
+                            f"RUNNER TENDER: {result.source} | {tender.title}"
                         )
 
                 all_tenders = remove_duplicates(
@@ -69,6 +69,8 @@ async def run_monitor_async(settings: Settings) -> tuple[Path, Path, int]:
                         for tender in result.tenders
                     ]
                 )
+
+                print(f"ALL_TENDERS={len(all_tenders)}")
 
                 total_before_dedupe = sum(
                     len(result.tenders)
