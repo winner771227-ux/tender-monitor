@@ -9,11 +9,11 @@ from tender_monitor.scrapers.tender_market import TenderMarketScraper
 
 SCRAPER_CLASSES = (
     JosephineScraper,
-    TenderMarketScraper,
-    TenderArenaScraper,
-    EZakazkyScraper,
-    ProfilyProebizScraper,
-    ProfilZadavateleVzScraper,
+    #TenderMarketScraper,
+    #TenderArenaScraper,
+    #EZakazkyScraper,
+    #ProfilyProebizScraper,
+    #ProfilZadavateleVzScraper,
 )
 
 __all__ = [
