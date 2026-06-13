@@ -93,6 +93,12 @@ class BaseScraper(ABC):
 
             tenders = await self.scrape_page(page)
 
+            logger.warning(
+                "%s SCRAPE_PAGE RETURNED %s",
+                self.source,
+                len(tenders),
+            )
+
             filtered = self.filter_by_keywords(
                 tenders
             )
