@@ -48,6 +48,12 @@ class JosephineScraper(BaseScraper):
                 ]
                 
                 logger.warning("JOSEPHINE CELLS %s", cells)
+
+                if cells and cells[0] in {"78046", "72095"}:
+                    logger.warning(
+                        "FOUND TARGET TENDER %s",
+                        cells,
+                    )
                 
                 tender_link = row.locator(
                     "a[href*='/tender/'][href*='/summary']"
@@ -149,48 +155,35 @@ class JosephineScraper(BaseScraper):
         current_url: str,
     ) -> Tender | None:
 
-        if len(cells) > 5:
-            country = cells[5].strip().upper()
-
-            if country != "CZ":
-                return None
-        
-        if len(cells) < 7:
-            logger.warning("RETURN NONE: TOO FEW CELLS")
+        if len(cells) < 8:
             return None
 
         external_id = cls._first_line(cells[0])
+
         title = cls._first_line(cells[2])
 
-        authority = (
-            cls._first_line(cells[4])
-            if len(cells) > 4
-            else ""
-        )
+        authority = cls._first_line(cells[4])
 
-        deadline = (
-            cls._first_date(cells[7])
-            if len(cells) > 7
-            else None
-        )
+        country = cls._first_line(cells[5]).upper()
 
-        
+        if country != "CZ":
+            return None
+
+        deadline = cls._first_date(cells[7])
+
         tender_url = (
             urljoin(current_url, href)
             if href
-            else cls._summary_url_from_id(current_url, external_id)
+            else cls._summary_url_from_id(
+                current_url,
+                external_id,
+            )
         )
 
-        
-        if not title:
-            logger.warning("RETURN NONE: EMPTY TITLE")
+        if not title or not tender_url:
             return None
 
-        if not tender_url:
-            logger.warning("RETURN NONE: EMPTY URL")
-            return None
-
-        tender = Tender(
+        return Tender(
             source=cls.source,
             title=title,
             url=tender_url,
@@ -198,9 +191,6 @@ class JosephineScraper(BaseScraper):
             deadline_at=deadline,
             external_id=external_id or None,
         )
-
-        
-        return tender
 
     @staticmethod
     def _summary_url_from_id(current_url: str, external_id: str) -> str | None:
