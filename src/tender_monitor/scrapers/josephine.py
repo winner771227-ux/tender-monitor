@@ -141,7 +141,7 @@ class JosephineScraper(BaseScraper):
         current_url: str
     ) -> Tender | None:
 
-        logger.Warning("BUILD CELLS=%s", cells)
+        logger.warning("BUILD CELLS=%s", cells)
         
         if len(cells) < 9:
             logger.warning("RETURN NONE LEN=%s", len(cells))
