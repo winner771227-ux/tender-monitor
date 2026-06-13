@@ -52,7 +52,7 @@ class JosephineScraper(BaseScraper):
                     "a[href*='/tender/'][href*='/summary']"
                 ).first
 
-                href = (
+                href = (def _build_tender_from_cells(
                     await tender_link.get_attribute("href")
                     if await tender_link.count()
                     else None
@@ -67,7 +67,7 @@ class JosephineScraper(BaseScraper):
                 logger.warning(
                     "TENDER=%s",
                     tender,
-                )
+                def _build_tender_from_cells()
 
                 if tender is None or not self.keyword_matches(tender):
                     continue
@@ -134,15 +134,30 @@ class JosephineScraper(BaseScraper):
             await context.close()
 
     @classmethod
-    def _build_tender_from_cells(cls, cells: list[str], href: str | None, current_url: str) -> Tender | None:
+    def _build_tender_from_cells(
+        cls, 
+        cells: list[str], 
+        href: str | None, 
+        current_url: str
+    ) -> Tender | None:
+
+        logger.Warning("BUILD CELLS=%s", cells)
         
         if len(cells) < 9:
+            logger.warning("RETURN NONE LEN=%s", len(cells))
             return None
 
         external_id = cls._first_line(cells[0])
         title = cls._first_line(cells[2])
         authority = cls._first_line(cells[5])
-      
+
+        logger.warning(
+            "PARSED id=%s title=%s authority=%s",
+            external_id,
+            title,
+            authority,
+        )
+
         deadline = cls._first_date(cells[8])
         
         tender_url = ( 
@@ -151,8 +166,21 @@ class JosephineScraper(BaseScraper):
             else cls._summary_url_from_id(current_url, external_id)
         )
 
+        logger.warning(
+            "URL=%s DEADLINE=%s",
+            tender_url,
+            deadline,
+        )
+
         if not title or not tender_url:
+            logger.warning(
+                "RETURN NONE TITLE=%s URL=%s",
+                title,
+                tender_url,
+            )
             return None
+
+        logger.warning("BUILD SUCCESS %s", external_id)
 
         return Tender(
             source=cls.source,
