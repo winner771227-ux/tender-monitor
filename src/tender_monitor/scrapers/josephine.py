@@ -188,7 +188,7 @@ class JosephineScraper(BaseScraper):
        )
 
         if not title:
-            logger.warning("RETURN NONE: EMPTY TITLE"),
+            logger.warning("RETURN NONE: EMPTY TITLE")
             return None
 
         if not tender_url:
