@@ -22,6 +22,7 @@ class JosephineScraper(BaseScraper):
 
     async def scrape_page(self, page: Page) -> list[Tender]:
         
+        logger.warning("JOSEPHINE START")
         
         tenders: list[Tender] = []
         visited_urls: set[str] = set()
