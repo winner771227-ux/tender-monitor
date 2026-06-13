@@ -52,57 +52,59 @@ async def run_monitor_async(settings: Settings) -> tuple[Path, Path, int]:
                         f"ERROR={result.error}"
                 )
 
-                for tender in result.tenders:
-                    print(
-                    f"FOUND {result.source}: {tender.title}"
+                    for tender in result.tenders:
+                        print(
+                            f"FOUND {result.source}: {tender.title}"
+                        )
+
+                all_tenders = remove_duplicates(
+                    [
+                        tender
+                        for result in results
+                        for tender in result.tenders
+                    ]
                 )
 
-            all_tenders = remove_duplicates(
-                [
-                tender
-                for result in results
-                for tender in result.tenders
+                total_before_dedupe = sum(
+                    len(result.tenders)
+                    for result in results
+                )
+
+                print("\n=== SUMMARY ===")
+                print(f"TOTAL_BEFORE_DEDUPE={total_before_dedupe}")
+                print(f"TOTAL_AFTER_DEDUPE={len(all_tenders)}")
+
+                deduped_results = [
+                    ScrapeResult(
+                        source="deduplicated",
+                        tenders=all_tenders,
+                    )
                 ]
-            )
 
-            
-        total_before_dedupe = sum(
-            len(result.tenders)
-            for result in results
-        )
+                database.save_results(
+                    run_id,
+                    deduped_results,
+                )
 
-        print("\n=== SUMMARY ===")
-        print(f"TOTAL_BEFORE_DEDUPE={total_before_dedupe}")
-        print(f"TOTAL_AFTER_DEDUPE={len(all_tenders)}")
+                scraper_errors = "; ".join(
+                    f"{result.source}: {result.error}"
+                    for result in results
+                    if result.error
+                ) or None
 
-        deduped_results = [
-            ScrapeResult(
-                source="deduplicated",
-                tenders=all_tenders,
-            )
-        ]
+                database.finish_run(
+                    run_id=run_id,
+                    status=(
+                        "completed_with_errors"
+                        if scraper_errors
+                        else "completed"
+                ),
+                    total_found=len(all_tenders),
+                    error=scraper_errors,
+                )
 
-        database.save_results(
-            run_id,
-            deduped_results,
-        )
-
-        scraper_errors = "; ".join(
-            f"{result.source}: {result.error}"
-            for result in results
-            if result.error
-        ) or None
-
-        database.finish_run(
-            run_id=run_id,
-            status=(
-                "completed_with_errors"
-                if scraper_errors
-                else "completed"
-            ),
-            total_found=len(all_tenders),
-            error=scraper_errors,
-        )
+            finally:
+                await browser.close()
 
     except Exception as exc:
         database.finish_run(
