@@ -66,6 +66,12 @@ class JosephineScraper(BaseScraper):
                 )
 
                 logger.warning(
+                    "MATCHES=%s TITLE=%s",
+                    self.keyword_matches(tender) if tender else None,
+                    tender.title if tender else None,
+                )
+
+                logger.warning(
                     "TENDER=%s",
                     tender,
                 )
@@ -156,14 +162,14 @@ class JosephineScraper(BaseScraper):
         title = cls._first_line(cells[2])
 
         authority = (
-            cls._first_line(cells[5])
-            if len(cells) > 5
+            cls._first_line(cells[4])
+            if len(cells) > 4
             else ""
         )
 
         deadline = (
-            cls._first_date(cells[8])
-            if len(cells) > 8
+            cls._first_date(cells[7])
+            if len(cells) > 7
             else None
         )
 
