@@ -149,6 +149,11 @@ class JosephineScraper(BaseScraper):
         current_url: str,
     ) -> Tender | None:
 
+        if len(cells) > 5:
+            country = cells[5].strip().upper()
+
+            if country != "CZ":
+                return None
         
         if len(cells) < 7:
             logger.warning("RETURN NONE: TOO FEW CELLS")
