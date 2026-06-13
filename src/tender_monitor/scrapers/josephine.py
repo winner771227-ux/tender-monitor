@@ -52,7 +52,7 @@ class JosephineScraper(BaseScraper):
                     "a[href*='/tender/'][href*='/summary']"
                 ).first
 
-                href = (def _build_tender_from_cells(
+                href = (
                     await tender_link.get_attribute("href")
                     if await tender_link.count()
                     else None
@@ -67,6 +67,7 @@ class JosephineScraper(BaseScraper):
                 logger.warning(
                     "TENDER=%s",
                     tender,
+                )
                 def _build_tender_from_cells()
 
                 if tender is None or not self.keyword_matches(tender):
