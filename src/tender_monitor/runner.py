@@ -42,33 +42,33 @@ async def run_monitor_async(settings: Settings) -> tuple[Path, Path, int]:
                 ]
 
                 results = await asyncio.gather(
-                    *(scraper.scrape(browser) for scraper in scrapers)
+                    *tasks
                 )
 
-                print("\n=== SCRAPER RESULTS ===")
-
                 for result in results:
-                    logger.warning(
-                        "SCRAPER=%s TENDERS=%s ERROR=%s",
-                        result.source,
-                        len(result.tenders),
-                        result.error,
-                    )
+                    print(
+                        f"SCRAPER={result.source} "
+                        f"TENDERS={len(result.tenders)} "
+                        f"ERROR={result.error}"
+                )
 
-            finally:
-                await browser.close()
+                for tender in result.tenders:
+                    print(
+                    f"FOUND {result.source}: {tender.title}"
+                )
 
-        total_before_dedupe = sum(
-            len(result.tenders)
-            for result in results
-        )
-
-        all_tenders = remove_duplicates(
-            [
+            all_tenders = remove_duplicates(
+                [
                 tender
                 for result in results
                 for tender in result.tenders
-            ]
+                ]
+            )
+
+            
+        total_before_dedupe = sum(
+            len(result.tenders)
+            for result in results
         )
 
         print("\n=== SUMMARY ===")
