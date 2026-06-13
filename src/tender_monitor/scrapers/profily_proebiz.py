@@ -32,7 +32,7 @@ class ProfilyProebizScraper(BaseScraper):
                 )
             )
             if not await self.goto_next_page(page, visited_urls):
-                logger.warning(
+                self.logger.warning(
                     "PROEBIZ NEXT PAGE FAILED: %s",
                     page.url,
                 )
