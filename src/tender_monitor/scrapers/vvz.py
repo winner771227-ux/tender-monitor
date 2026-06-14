@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 class VvzScraper(BaseScraper):
     source = "VVZ"
     # Hlavní stránka VVZ s výpisem zakázek
-    url = "https://vvz.nipez.cz/verejne-zakazky?druh=VS&stav=aktivni"
+    url = "https://vvz.nipez.cz/profil/uredni-deska/"
 
     async def scrape_page(self, page: Page) -> list[Tender]:
         tenders: list[Tender] = []

@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 class TenderArenaScraper(BaseScraper):
     source = "Tender Arena"
-    url = "https://tenderarena.cz/dodavatele/seznam-zakazek/?type=public"
+    url = "https://tenderarena.cz/dodavatele/seznam-zakazek/"
 
     async def scrape_page(self, page: Page) -> list[Tender]:
         tenders: list[Tender] = []

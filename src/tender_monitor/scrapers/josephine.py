@@ -1,4 +1,4 @@
-"""Scraper for JOSEPHINE – josephine.proebiz.com"""
+"""Scraper pro JOSEPHINE – josephine.proebiz.com"""
 from __future__ import annotations
 
 import logging
@@ -15,8 +15,8 @@ logger = logging.getLogger(__name__)
 
 _DATE_RE = re.compile(r"\b\d{2}\.\d{2}\.\d{4}(?:\s+\d{2}:\d{2}:\d{2})?\b")
 
-# Štítky, pod kterými JOSEPHINE zobrazuje datum zveřejnění zakázky
-_PUBLICATION_LABELS = (
+# Štítky pro datum zveřejnění na detailní stránce JOSEPHINE
+_PUB_LABELS = (
     "Datum uveřejnění",
     "Datum zveřejnění",
     "Zveřejněno",
@@ -25,6 +25,7 @@ _PUBLICATION_LABELS = (
     "Datum zahájení",
     "Publication date",
     "Published",
+    "Vytvořeno",
 )
 
 
@@ -59,16 +60,15 @@ class JosephineScraper(BaseScraper):
                 if tender is None:
                     continue
 
-                # Předběžná kontrola klíčových slov (bez data)
                 if not self._keyword_matches(tender):
                     continue
 
-                # Načteme datum zveřejnění z detailní stránky zakázky
-                tender.published_at = await self._get_publication_date(page, tender.url)
+                # Načteme datum zveřejnění z detailu – ale POUZE z konkrétních štítků
+                # Nikdy nepoužíváme "nejstarší datum na stránce" – bylo by chybné
+                tender.published_at = await self._get_pub_date(page, tender.url)
                 logger.info(
                     "JOSEPHINE tender=%s published=%s",
-                    tender.title[:60],
-                    tender.published_at,
+                    tender.title[:50], tender.published_at,
                 )
                 tenders.append(tender)
 
@@ -83,11 +83,12 @@ class JosephineScraper(BaseScraper):
         logger.info("JOSEPHINE total=%s", len(tenders))
         return tenders
 
-    # ------------------------------------------------------------------
-    # Načtení data zveřejnění z detailní stránky
-    # ------------------------------------------------------------------
-
-    async def _get_publication_date(self, page: Page, tender_url: str) -> str | None:
+    async def _get_pub_date(self, page: Page, tender_url: str) -> str | None:
+        """Načte datum zveřejnění z detailní stránky zakázky.
+        
+        Hledáme POUZE u konkrétních štítků – nikdy nevracíme libovolné 
+        datum ze stránky, protože by mohlo být staré (patička, dokumenty z roku 2019 atd.).
+        """
         ctx = await page.context.browser.new_context()
         detail = await ctx.new_page()
         detail.set_default_timeout(self.timeout_ms)
@@ -96,36 +97,40 @@ class JosephineScraper(BaseScraper):
             await detail.wait_for_selector("body", state="attached", timeout=self.timeout_ms)
             text = await detail.locator("body").inner_text()
 
-            # 1. Zkusíme najít datum u konkrétního štítku (nejspolehlivější)
-            for label in _PUBLICATION_LABELS:
+            for label in _PUB_LABELS:
+                # Hledáme vzor: "Datum uveřejnění: 02.06.2026" nebo "Datum uveřejnění\n02.06.2026"
                 pattern = re.compile(
                     rf"{re.escape(label)}\s*:?\s*(\d{{2}}\.\d{{2}}\.\d{{4}}(?:\s+\d{{2}}:\d{{2}}:\d{{2}})?)",
                     re.IGNORECASE,
                 )
                 m = pattern.search(text)
                 if m:
-                    logger.info("JOSEPHINE date via label '%s': %s", label, m.group(1))
-                    return m.group(1).strip()
+                    found = m.group(1).strip()
+                    logger.info("JOSEPHINE date via label '%s': %s", label, found)
+                    return found
 
-            # 2. Záložní: nejstarší datum v celém textu stránky
-            #    (datum zveřejnění bývá nejstarší ze všech dat)
-            all_dates = _DATE_RE.findall(text)
-            if all_dates:
-                oldest = min(all_dates, key=self._date_key)
-                logger.info("JOSEPHINE date via oldest fallback: %s", oldest)
-                return oldest
+                # Alternativa: štítek na jednom řádku, datum na dalším
+                lines = text.splitlines()
+                for i, line in enumerate(lines[:-1]):
+                    if label.lower() in line.lower():
+                        # Hledáme datum na dalším nebo přespříštím řádku
+                        for next_line in lines[i+1:i+4]:
+                            m2 = _DATE_RE.search(next_line)
+                            if m2:
+                                found = m2.group(0).strip()
+                                logger.info("JOSEPHINE date via nextline '%s': %s", label, found)
+                                return found
 
+            # Žádný štítek nenalezen – vrátíme None
+            # Zakázka pak projde filtrem (bez data = zachovat)
+            logger.info("JOSEPHINE date not found for %s", tender_url)
             return None
 
         except Exception as exc:
-            logger.warning("JOSEPHINE detail fetch failed for %s: %s", tender_url, exc)
+            logger.warning("JOSEPHINE detail error %s: %s", tender_url, exc)
             return None
         finally:
             await ctx.close()
-
-    # ------------------------------------------------------------------
-    # Pomocné metody
-    # ------------------------------------------------------------------
 
     async def _wait_table(self, page: Page) -> None:
         await page.wait_for_selector(
@@ -187,8 +192,3 @@ class JosephineScraper(BaseScraper):
     @staticmethod
     def _clean(value: str) -> str:
         return re.sub(r"[ \t]+", " ", value.replace("\xa0", " ")).strip()
-
-    @staticmethod
-    def _date_key(v: str) -> tuple[int, int, int, str]:
-        d, m, y = v[:10].split(".")
-        return int(y), int(m), int(d), v[11:]
