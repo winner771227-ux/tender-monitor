@@ -127,7 +127,20 @@ class BaseScraper(ABC):
     # ------------------------------------------------------------------
 
     async def scrape(self, browser: Browser) -> ScrapeResult:
-        page = await browser.new_page()
+        # Vytvoříme kontext s reálným User-Agentem aby portály nás neblokly jako robota
+        context = await browser.new_context(
+            user_agent=(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/125.0.0.0 Safari/537.36"
+            ),
+            locale="cs-CZ",
+            extra_http_headers={
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+                "Accept-Language": "cs-CZ,cs;q=0.9,en;q=0.8",
+            },
+        )
+        page = await context.new_page()
         page.set_default_timeout(max(self.timeout_ms, 120_000))
         try:
             await page.goto(self.url, wait_until="domcontentloaded", timeout=max(self.timeout_ms, 120_000))
@@ -141,7 +154,7 @@ class BaseScraper(ABC):
             logger.exception("Scraper %s failed", self.source)
             return ScrapeResult(source=self.source, tenders=[], error=str(exc))
         finally:
-            await page.close()
+            await context.close()
 
     @abstractmethod
     async def scrape_page(self, page: Page) -> list[Tender]:
@@ -258,24 +271,28 @@ class BaseScraper(ABC):
         return self.deduplicate_tenders(tenders)
 
     async def goto_next_page(self, page: Page, visited_urls: set[str]) -> bool:
-        next_link = page.locator(NEXT_PAGE_SELECTOR).last
-        if not await next_link.count():
-            return False
-        disabled = await next_link.get_attribute("disabled")
-        aria_disabled = await next_link.get_attribute("aria-disabled")
-        class_attr = await next_link.get_attribute("class") or ""
-        if disabled is not None or aria_disabled == "true" or "disabled" in class_attr.lower():
-            return False
-        href = await next_link.get_attribute("href")
-        if href and href != "#":
-            next_url = self.absolute_url(page.url, href)
-            if next_url in visited_urls:
+        try:
+            next_link = page.locator(NEXT_PAGE_SELECTOR).last
+            if not await next_link.count():
                 return False
-            await page.goto(next_url, wait_until="domcontentloaded")
-            return True
-        await next_link.click()
-        await page.wait_for_load_state("domcontentloaded")
-        return page.url not in visited_urls
+            disabled = await next_link.get_attribute("disabled")
+            aria_disabled = await next_link.get_attribute("aria-disabled")
+            class_attr = await next_link.get_attribute("class") or ""
+            if disabled is not None or aria_disabled == "true" or "disabled" in class_attr.lower():
+                return False
+            href = await next_link.get_attribute("href")
+            if href and href != "#":
+                next_url = self.absolute_url(page.url, href)
+                if next_url in visited_urls:
+                    return False
+                await page.goto(next_url, wait_until="domcontentloaded", timeout=self.timeout_ms)
+                return True
+            await next_link.click()
+            await page.wait_for_load_state("domcontentloaded", timeout=self.timeout_ms)
+            return page.url not in visited_urls
+        except Exception as exc:
+            logger.warning("%s: stránkování selhalo (%s) – končím na aktuální stránce", self.source, exc)
+            return False
 
     # ------------------------------------------------------------------
     # Internal helpers

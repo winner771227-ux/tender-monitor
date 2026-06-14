@@ -1,4 +1,4 @@
-"""Scraper for NEN – nen.nipez.cz."""
+"""Scraper pro NEN – Národní elektronický nástroj (nen.nipez.cz)."""
 from __future__ import annotations
 
 import logging
@@ -20,16 +20,23 @@ class NenScraper(BaseScraper):
         visited_urls: set[str] = set()
         table_xpath = "//table[.//th[contains(normalize-space(.), 'Název zadávacího postupu')]]"
 
-        # NEN requires networkidle – already loaded by goto in base.scrape
-        await page.wait_for_load_state("networkidle", timeout=120_000)
+        # NEN potřebuje čekat na plné načtení (JavaScript renderuje tabulku)
+        try:
+            await page.wait_for_load_state("networkidle", timeout=60_000)
+        except Exception:
+            logger.warning("NEN: networkidle timeout, pokračuji")
 
         for _ in range(self.max_pages):
             if len(tenders) >= self.max_tenders:
                 break
             visited_urls.add(page.url)
-            batch = await self.collect_table_tenders(page, table_xpath, detail_selector="a:has-text('Detail')")
+
+            batch = await self.collect_table_tenders(
+                page, table_xpath, detail_selector="a:has-text('Detail')", open_detail=False
+            )
             tenders.extend(batch)
             logger.info("NEN page=%s batch=%s total=%s", page.url, len(batch), len(tenders))
+
             if not await self.goto_next_page(page, visited_urls):
                 break
 
