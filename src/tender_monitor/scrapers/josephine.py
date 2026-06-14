@@ -32,6 +32,10 @@ _PUB_LABELS = (
 class JosephineScraper(BaseScraper):
     source = "JOSEPHINE"
     url = "https://josephine.proebiz.com/cs/public-tenders/all"
+    # JOSEPHINE řadí zakázky od nejnovějších – stačí prvních 10 stránek (200 zakázek)
+    # Starší zakázky jsou na stránkách 100+ a tam nenajdeme nic relevantního
+    max_pages = 10
+    max_tenders = 200
 
     async def scrape_page(self, page: Page) -> list[Tender]:
         tenders: list[Tender] = []

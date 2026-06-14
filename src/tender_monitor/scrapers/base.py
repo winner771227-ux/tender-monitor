@@ -79,15 +79,25 @@ ID_HEADER_ALIASES = ("systemove cislo", "evidencni cislo", "id", "cislo zakazky"
 # ---------------------------------------------------------------------------
 
 _SK_WORDS = {
-    "zákazka", "zákazky", "zákaziek",
-    "obstarávanie", "obstarávateľ", "obstarávateľa",
-    "uchádzač", "súťaž", "verejná súťaž",
-    "slovensko", "slovak", "slovenská republika",
+    # Slovenská města a instituce
+    "bratislava", "košice", "prešov", "žilina", "nitra", "trnava", "trenčín", "trencin",
+    "banská bystrica", "banska bystrica",
+    "slovensko", "slovak", "slovenská republika", "slovenska republika",
+    # Slovenské výrazy ve veřejných zakázkách
+    "zákazka", "zákazky", "zákaziek", "zakazka",
+    "obstarávanie", "obstaravanie", "obstarávateľ", "obstaravatel",
+    "uchádzač", "uchadzac", "súťaž", "sutaz", "verejná súťaž",
+    "námestie", "namestie", "nábrežie",
+    # Slovenské specifické výrazy
+    "koľajníc", "kolajnic", "brúsenie", "brusenie",
+    "pamätník", "pamatnik", "snp",
+    # Slovenské TLD v URL
 }
 
 _PL_WORDS = {
     "zamówienie", "zamówień", "przetarg", "zamawiający",
     "wykonawca", "oferta", "polska", "rzeczpospolita",
+    "warszawa", "kraków", "wrocław", "gdansk", "poznan",
 }
 
 
@@ -186,12 +196,17 @@ class BaseScraper(ABC):
             deadline = self._parse_date(tender.deadline_at) if tender.deadline_at else None
             published_ok = published is None or published >= cutoff
             deadline_ok = deadline is not None and deadline >= now
+
             if not published_ok and not deadline_ok:
                 logger.info(
                     "SKIP příliš stará published=%s deadline=%s: %s",
                     tender.published_at, tender.deadline_at, tender.title[:60],
                 )
                 continue
+
+            if published is None and deadline is None:
+                logger.info("POZOR bez data: %s – %s", self.source, tender.title[:60])
+
             tender.matched_keywords = matches
             result.append(tender)
         return result
