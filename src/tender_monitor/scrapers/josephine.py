@@ -1,9 +1,6 @@
 from __future__ import annotations
 
 import logging
-
-logger = logging.getLogger(__name__)
-
 import re
 from urllib.parse import urljoin
 
@@ -13,6 +10,8 @@ from tender_monitor.dedupe import normalize_text
 from tender_monitor.models import Tender
 from tender_monitor.scrapers.base import BaseScraper
 
+logger = logging.getLogger(__name__)
+
 _DATE_RE = re.compile(r"\b\d{2}\.\d{2}\.\d{4}(?:\s+\d{2}:\d{2}:\d{2})?\b")
 
 
@@ -21,208 +20,135 @@ class JosephineScraper(BaseScraper):
     url = "https://josephine.proebiz.com/cs/public-tenders/all"
 
     async def scrape_page(self, page: Page) -> list[Tender]:
-        
-        logger.warning("JOSEPHINE START")
-        
         tenders: list[Tender] = []
         visited_urls: set[str] = set()
 
         while page.url not in visited_urls:
-
-            
-            
             visited_urls.add(page.url)
-            await self._wait_for_tender_table(page)
-            rows = await self._tender_rows(page)
-            
-            logger.warning(
-                "JOSEPHINE PAGE %s ROWS=%s",
-                page.url,
-                len(rows),
-            )
+            await self._wait_table(page)
+            rows = await self._rows(page)
+            logger.info("JOSEPHINE page=%s rows=%s", page.url, len(rows))
 
             for row in rows:
+                if len(tenders) >= self.max_tenders:
+                    break
                 cells = [
-                    self._clean_text(await cell.inner_text()) 
+                    self._clean(await cell.inner_text())
                     for cell in await row.locator("td").all()
                 ]
-                
-                logger.warning("JOSEPHINE CELLS %s", cells)
-
-                if cells and cells[0] in {"78046", "72095"}:
-                    logger.warning(
-                        "FOUND TARGET TENDER %s",
-                        cells,
-                    )
-                
-                tender_link = row.locator(
-                    "a[href*='/tender/'][href*='/summary']"
-                ).first
-
-                href = (
-                    await tender_link.get_attribute("href")
-                    if await tender_link.count()
-                    else None
-                )
-                                   
-                tender = self._build_tender_from_cells(
-                    cells,
-                    href,
-                    page.url,
-                )
-
-                logger.warning(
-                    "MATCHES=%s TITLE=%s",
-                    self.keyword_matches(tender) if tender else None,
-                    tender.title if tender else None,
-                )
-
-                
-                if tender is None or not self.keyword_matches(tender):
+                if len(cells) < 7:
                     continue
 
-                tender.published_at = await self._extract_publication_date(
-                    page,
-                    tender.url,
-                )
+                link = row.locator("a[href*='/tender/'][href*='/summary']").first
+                href = await link.get_attribute("href") if await link.count() else None
 
+                tender = self._build(cells, href, page.url)
+                if tender is None:
+                    continue
+
+                # keyword pre-check (no date yet – date fetched from detail)
+                if not self._keyword_matches(tender):
+                    continue
+
+                tender.published_at = await self._earliest_doc_date(page, tender.url)
                 tenders.append(tender)
-              
 
-            next_url = await self._next_page_url(page)
+            if len(tenders) >= self.max_tenders:
+                break
+
+            next_url = await self._next_url(page)
             if not next_url or next_url in visited_urls:
                 break
             await page.goto(next_url, wait_until="domcontentloaded")
 
-            logger.warning(
-                "JOSEPHINE RETURNING %s TENDERS",
-                len(tenders),
-            )
-
+        logger.info("JOSEPHINE total=%s", len(tenders))
         return tenders
 
-    def keyword_matches(self, tender: Tender) -> list[str]:
-        haystack = normalize_text(" ".join(filter(None, (tender.title, tender.description, tender.authority))))
-        return [keyword for keyword in self.keywords if normalize_text(keyword) in haystack]
+    # ------------------------------------------------------------------
 
-    async def _wait_for_tender_table(self, page: Page) -> None:
+    async def _wait_table(self, page: Page) -> None:
         await page.wait_for_selector(
             "xpath=//table[.//th[contains(normalize-space(.), 'Název zakázky')]]//tr[td]",
             state="attached",
             timeout=self.timeout_ms,
         )
 
-    async def _tender_rows(self, page: Page):
+    async def _rows(self, page: Page):
         rows = await page.locator(
             "xpath=//table[.//th[contains(normalize-space(.), 'Název zakázky')]]//tr[td]"
         ).all()
-        return [row for row in rows if len(await row.locator("td").all()) >= 7]
+        return [r for r in rows if len(await r.locator("td").all()) >= 7]
 
-    async def _next_page_url(self, page: Page) -> str | None:
-        next_link = page.locator("a:has-text('Další'), a:has-text('Next')").last
-
-        
-        if not await next_link.count():
+    async def _next_url(self, page: Page) -> str | None:
+        link = page.locator("a:has-text('Další'), a:has-text('Next')").last
+        if not await link.count():
             return None
-
-        href = await next_link.get_attribute("href")
-
-        
+        href = await link.get_attribute("href")
         if not href or href in {"#", page.url}:
             return None
-
         return urljoin(page.url, href)
 
-    async def _extract_publication_date(self, page: Page, tender_url: str) -> str | None:
-        context = await page.context.browser.new_context()
-        detail_page = await context.new_page()
-        detail_page.set_default_timeout(self.timeout_ms)
+    async def _earliest_doc_date(self, page: Page, tender_url: str) -> str | None:
+        ctx = await page.context.browser.new_context()
+        detail = await ctx.new_page()
+        detail.set_default_timeout(self.timeout_ms)
         try:
-            await detail_page.goto(tender_url, wait_until="domcontentloaded")
-            await detail_page.wait_for_selector("body", state="attached", timeout=self.timeout_ms)
-            text = await detail_page.locator("body").inner_text()
-            document_section = self._text_after_first_heading(text, ("Dokumenty", "Documents"))
-            dates = _DATE_RE.findall(document_section)
-            return min(dates, default=None, key=self._date_sort_key)
+            await detail.goto(tender_url, wait_until="domcontentloaded")
+            await detail.wait_for_selector("body", state="attached", timeout=self.timeout_ms)
+            text = await detail.locator("body").inner_text()
+            section = self._after_heading(text, ("Dokumenty", "Documents"))
+            dates = _DATE_RE.findall(section)
+            return min(dates, default=None, key=self._date_key)
+        except Exception:
+            return None
         finally:
-            await context.close()
+            await ctx.close()
+
+    # ------------------------------------------------------------------
 
     @classmethod
-    def _build_tender_from_cells(
-        cls,
-        cells: list[str],
-        href: str | None,
-        current_url: str,
-    ) -> Tender | None:
-
-        if len(cells) < 7:
-            return None
-
-        external_id = cls._first_line(cells[0])
-
-        title = cls._first_line(cells[2])
-
-        authority = (
-            cls._first_line(cells[5])
-            if len(cells) > 5
-            else ""
-        )
-
-        deadline = (
-            cls._first_date(cells[8])
-            if len(cells) > 8
-            else None
-        )
-
-        tender_url = (
+    def _build(cls, cells: list[str], href: str | None, current_url: str) -> Tender | None:
+        external_id = cls._line(cells[0])
+        title = cls._line(cells[2])
+        authority = cls._line(cells[5]) if len(cells) > 5 else ""
+        deadline = cls._date(cells[8]) if len(cells) > 8 else None
+        url = (
             urljoin(current_url, href)
             if href
-            else cls._summary_url_from_id(
-                current_url,
-                external_id,
-            )
+            else (f"https://josephine.proebiz.com/cs/tender/{external_id}/summary" if external_id.isdigit() else None)
         )
-
-        if not title or not tender_url:
+        if not title or not url:
             return None
-
         return Tender(
-            source=cls.source,
+            source=JosephineScraper.source,
             title=title,
-            url=tender_url,
+            url=url,
             authority=authority or None,
             deadline_at=deadline,
             external_id=external_id or None,
         )
 
     @staticmethod
-    def _summary_url_from_id(current_url: str, external_id: str) -> str | None:
-        if not external_id.isdigit():
-            return None
-        return urljoin(current_url, f"/cs/tender/{external_id}/summary")
+    def _date(value: str) -> str | None:
+        m = _DATE_RE.search(value)
+        return m.group(0) if m else None
 
     @staticmethod
-    def _first_date(value: str) -> str | None:
-        match = _DATE_RE.search(value)
-        return match.group(0) if match else None
+    def _line(value: str) -> str:
+        return next((l.strip() for l in value.splitlines() if l.strip()), "")
 
     @staticmethod
-    def _first_line(value: str) -> str:
-        return next((line.strip() for line in value.splitlines() if line.strip()), "")
-
-    @staticmethod
-    def _clean_text(value: str) -> str:
+    def _clean(value: str) -> str:
         return re.sub(r"[ \t]+", " ", value.replace("\xa0", " ")).strip()
 
     @staticmethod
-    def _text_after_first_heading(text: str, headings: tuple[str, ...]) -> str:
-        for heading in headings:
-            marker = f"\n{heading}\n"
-            if marker in text:
-                return text.split(marker, 1)[1]
+    def _after_heading(text: str, headings: tuple[str, ...]) -> str:
+        for h in headings:
+            if f"\n{h}\n" in text:
+                return text.split(f"\n{h}\n", 1)[1]
         return ""
 
     @staticmethod
-    def _date_sort_key(value: str) -> tuple[int, int, int, str]:
-        day, month, year = value[:10].split(".")
-        return int(year), int(month), int(day), value[11:]
+    def _date_key(v: str) -> tuple[int, int, int, str]:
+        d, m, y = v[:10].split(".")
+        return int(y), int(m), int(d), v[11:]
