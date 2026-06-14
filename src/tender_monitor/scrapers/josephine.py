@@ -96,15 +96,13 @@ class JosephineScraper(BaseScraper):
                     continue
 
                 # Datum z detailu pokud není v tabulce
-                # Klíčové slovo musí být v NÁZVU zakázky (ne jen fulltextově)
-                # JOSEPHINE fulltext vrací i zakázky kde je slovo jen v dokumentech
-                from tender_monitor.dedupe import normalize_text
-                if normalize_text(keyword) not in normalize_text(tender.title):
-                    logger.debug("JOSEPHINE [%s] SKIP (slovo není v názvu): %s", keyword, tender.title[:50])
-                    continue
-
                 if not tender.published_at:
                     tender.published_at = await self._get_pub_date(page, tender.url)
+
+                # Zakázka byla nalezena vyhledáváním tohoto klíčového slova
+                # Přidáme ho do matched_keywords aby base._filter nevyhodil zakázku
+                if keyword not in tender.matched_keywords:
+                    tender.matched_keywords.append(keyword)
 
                 logger.info(
                     "JOSEPHINE [%s] tender=%s published=%s",

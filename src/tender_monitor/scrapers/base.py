@@ -201,7 +201,12 @@ class BaseScraper(ABC):
                 logger.debug("SKIP foreign: %s", tender.title)
                 continue
             # 2. Musí odpovídat alespoň jedno klíčové slovo
-            matches = self._keyword_matches(tender)
+            # Pokud jsou matched_keywords už přednastaveny scrapérem (např. z vyhledávání),
+            # použijeme je rovnou – nemusíme znovu hledat v textu
+            if tender.matched_keywords:
+                matches = tender.matched_keywords
+            else:
+                matches = self._keyword_matches(tender)
             if not matches:
                 continue
             # 3. Kontrola data – zachováme zakázku pokud:
