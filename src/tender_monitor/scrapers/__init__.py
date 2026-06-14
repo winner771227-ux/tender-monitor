@@ -34,4 +34,4 @@ __all__ = [
     "TenderMarketScraper",
     "VvzScraper",
 ]
-PYEOF
+
