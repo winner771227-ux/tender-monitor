@@ -1,4 +1,4 @@
-
+"""Base class and shared helpers for all tender scrapers."""
 from __future__ import annotations
 
 import logging
@@ -154,7 +154,7 @@ class BaseScraper(ABC):
     def _filter(self, tenders: list[Tender]) -> list[Tender]:
         cutoff = datetime.now() - timedelta(days=14)
         result: list[Tender] = []
-                
+        for tender in tenders:
             # 1. Reject Slovak / Polish tenders
             if _is_foreign(tender):
                 logger.debug("SKIP foreign: %s", tender.title)

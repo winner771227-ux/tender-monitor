@@ -1,3 +1,4 @@
+"""SQLite storage for tender runs and results."""
 from __future__ import annotations
 
 import sqlite3
@@ -53,44 +54,35 @@ class TenderDatabase:
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
     def connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.path)
-        connection.row_factory = sqlite3.Row
-        return connection
+        conn = sqlite3.connect(self.path)
+        conn.row_factory = sqlite3.Row
+        return conn
 
     def initialize(self) -> None:
-        with self.connect() as connection:
-            connection.executescript(SCHEMA)
+        with self.connect() as conn:
+            conn.executescript(SCHEMA)
 
     def start_run(self) -> int:
         now = datetime.now(UTC).isoformat()
-        with self.connect() as connection:
-            cursor = connection.execute(
-                "INSERT INTO runs (started_at, status) VALUES (?, ?)",
-                (now, "running"),
-            )
+        with self.connect() as conn:
+            cursor = conn.execute("INSERT INTO runs (started_at, status) VALUES (?, ?)", (now, "running"))
             return int(cursor.lastrowid)
 
     def finish_run(self, run_id: int, status: str, total_found: int, error: str | None = None) -> None:
         now = datetime.now(UTC).isoformat()
-        with self.connect() as connection:
-            connection.execute(
-                """
-                UPDATE runs
-                SET finished_at = ?, status = ?, total_found = ?, error = ?
-                WHERE id = ?
-                """,
+        with self.connect() as conn:
+            conn.execute(
+                "UPDATE runs SET finished_at=?, status=?, total_found=?, error=? WHERE id=?",
                 (now, status, total_found, error, run_id),
             )
 
-    def save_results(self, run_id: int, results: list[ScrapeResult]) -> list[Tender]:
-        saved: list[Tender] = []
+    def save_results(self, run_id: int, results: list[ScrapeResult]) -> None:
         now = datetime.now(UTC).isoformat()
-        with self.connect() as connection:
+        with self.connect() as conn:
             for result in results:
                 for tender in result.tenders:
-                    fingerprint = tender_fingerprint(tender)
-                    matched_keywords = ", ".join(tender.matched_keywords)
-                    connection.execute(
+                    fp = tender_fingerprint(tender)
+                    conn.execute(
                         """
                         INSERT INTO tenders (
                             fingerprint, source, external_id, title, url, authority,
@@ -98,48 +90,41 @@ class TenderDatabase:
                             first_seen_at, last_seen_at
                         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         ON CONFLICT(fingerprint) DO UPDATE SET
-                            title = excluded.title,
-                            url = excluded.url,
-                            authority = excluded.authority,
-                            published_at = excluded.published_at,
-                            deadline_at = excluded.deadline_at,
-                            description = excluded.description,
-                            matched_keywords = excluded.matched_keywords,
-                            last_seen_at = excluded.last_seen_at
+                            title=excluded.title, url=excluded.url, authority=excluded.authority,
+                            published_at=excluded.published_at, deadline_at=excluded.deadline_at,
+                            description=excluded.description, matched_keywords=excluded.matched_keywords,
+                            last_seen_at=excluded.last_seen_at
                         """,
                         (
-                            fingerprint,
-                            tender.source,
-                            tender.external_id,
-                            tender.title,
-                            tender.url,
-                            tender.authority,
-                            tender.published_at,
-                            tender.deadline_at,
-                            tender.description,
-                            matched_keywords,
-                            now,
-                            now,
+                            fp, tender.source, tender.external_id, tender.title,
+                            tender.url, tender.authority, tender.published_at,
+                            tender.deadline_at, tender.description,
+                            ", ".join(tender.matched_keywords), now, now,
                         ),
                     )
-                    row = connection.execute(
-                        "SELECT id FROM tenders WHERE fingerprint = ?",
-                        (fingerprint,),
-                    ).fetchone()
-                    connection.execute(
+                    row = conn.execute("SELECT id FROM tenders WHERE fingerprint=?", (fp,)).fetchone()
+                    conn.execute(
                         "INSERT INTO tender_history (tender_id, run_id, seen_at) VALUES (?, ?, ?)",
                         (row["id"], run_id, now),
                     )
-                    saved.append(tender)
-        return saved
 
-    def list_tenders(self) -> list[sqlite3.Row]:
-        with self.connect() as connection:
-            return list(
-                connection.execute(
-                    """
-                    SELECT * FROM tenders
-                    ORDER BY COALESCE(deadline_at, published_at, last_seen_at) DESC
-                    """
-                )
-            )
+    def list_tenders_for_run(self, run_id: int) -> list[sqlite3.Row]:
+        """Return only tenders found in this specific run (for the daily report)."""
+        with self.connect() as conn:
+            return list(conn.execute(
+                """
+                SELECT DISTINCT t.*
+                FROM tenders t
+                JOIN tender_history h ON h.tender_id = t.id
+                WHERE h.run_id = ?
+                ORDER BY COALESCE(t.published_at, t.last_seen_at) DESC
+                """,
+                (run_id,),
+            ))
+
+    def list_all_tenders(self) -> list[sqlite3.Row]:
+        """Return all tenders ever stored (historical view)."""
+        with self.connect() as conn:
+            return list(conn.execute(
+                "SELECT * FROM tenders ORDER BY COALESCE(published_at, last_seen_at) DESC"
+            ))

@@ -1,4 +1,3 @@
-
 """Scraper for NEN – nen.nipez.cz."""
 from __future__ import annotations
 

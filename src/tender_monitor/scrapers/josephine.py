@@ -1,3 +1,4 @@
+"""Scraper for JOSEPHINE – josephine.proebiz.com (Czech public tenders only)."""
 from __future__ import annotations
 
 import logging
