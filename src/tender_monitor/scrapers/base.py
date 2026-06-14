@@ -1,3 +1,5 @@
+cat > /home/claude/tm/src/tender_monitor/scrapers/base.py << 'PYEOF'
+"""Base class and shared helpers for all tender scrapers."""
 from __future__ import annotations
 
 import logging
@@ -13,15 +15,19 @@ from tender_monitor.models import ScrapeResult, Tender
 
 logger = logging.getLogger(__name__)
 
-logging.basicConfig(
-    level=logging.INFO
-)
+# ---------------------------------------------------------------------------
+# Regex helpers
+# ---------------------------------------------------------------------------
 
 DATE_RE = re.compile(
     r"\b(?:\d{1,2}[.]\s*\d{1,2}[.]\s*\d{4}|\d{4}-\d{2}-\d{2})"
-    r"(?:\s*(?:do|v|at)?\s*\d{1,2}:\d{2}(?::\d{2})?)?\b",
+    r"(?:\s*(?:do|v|at)?\s*\d{1,2}:\d{2}(?::\d{2})?)?",
     re.IGNORECASE,
 )
+
+# ---------------------------------------------------------------------------
+# CSS / XPath selectors
+# ---------------------------------------------------------------------------
 
 NEXT_PAGE_SELECTOR = (
     "a[rel='next'], "
@@ -37,6 +43,10 @@ DETAIL_LINK_SELECTOR = (
     "a[href*='tender'], a[href*='verejne-zakazky'], a[href*='verejna-zakazka'], "
     "a:has-text('Detail'), a:has-text('Zobrazit')"
 )
+
+# ---------------------------------------------------------------------------
+# Column-header aliases (used to map table columns to fields)
+# ---------------------------------------------------------------------------
 
 TITLE_HEADER_ALIASES = (
     "nazev zakazky",
@@ -65,183 +75,123 @@ DEADLINE_HEADER_ALIASES = (
 )
 ID_HEADER_ALIASES = ("systemove cislo", "evidencni cislo", "id", "cislo zakazky", "kod")
 
+# ---------------------------------------------------------------------------
+# Slovak / Polish word lists – used to reject non-Czech tenders
+# ---------------------------------------------------------------------------
+
+_SK_WORDS = {
+    "zákazka", "zákazky", "zákaziek",
+    "obstarávanie", "obstarávateľ", "obstarávateľa",
+    "uchádzač", "súťaž", "verejná súťaž",
+    "slovensko", "slovak", "slovenská republika",
+}
+
+_PL_WORDS = {
+    "zamówienie", "zamówień", "przetarg", "zamawiający",
+    "wykonawca", "oferta", "polska", "rzeczpospolita",
+}
+
+
+def _is_foreign(tender: Tender) -> bool:
+    """Return True when the tender appears to be Slovak or Polish."""
+    text = normalize_text(
+        " ".join(part or "" for part in (tender.title, tender.authority, tender.url, tender.description))
+    )
+    for word in _SK_WORDS | _PL_WORDS:
+        if normalize_text(word) in text:
+            return True
+    # URL-based check (e.g. .sk or .pl domains)
+    url_lower = (tender.url or "").lower()
+    if re.search(r"https?://[^/]+\.(sk|pl)[/:]", url_lower):
+        return True
+    return False
+
+
+# ---------------------------------------------------------------------------
+# Base scraper
+# ---------------------------------------------------------------------------
 
 class BaseScraper(ABC):
-    """Base class for Playwright tender scrapers."""
+    """Abstract base class for Playwright tender scrapers."""
 
     source: str
     url: str
-    max_pages: int = 50
+    max_pages: int = 10          # at most 10 pages per portal
+    max_tenders: int = 100       # hard limit: first 100 tenders per portal
 
     def __init__(self, keywords: tuple[str, ...], timeout_ms: int) -> None:
         self.keywords = keywords
         self.timeout_ms = timeout_ms
 
+    # ------------------------------------------------------------------
+    # Public entry-point
+    # ------------------------------------------------------------------
+
     async def scrape(self, browser: Browser) -> ScrapeResult:
         page = await browser.new_page()
-
-        page.set_default_timeout(
-            max(self.timeout_ms, 120000)
-        )
-
+        page.set_default_timeout(max(self.timeout_ms, 120_000))
         try:
-            await page.goto(
-                self.url,
-                wait_until="domcontentloaded",
-                timeout=max(self.timeout_ms, 120000),
-            )
-
-            tenders = await self.scrape_page(page)
-
-            logger.warning(
-                "%s SCRAPE_PAGE RETURNED %s",
-                self.source,
-                len(tenders),
-            )
-
-            filtered = self.filter_by_keywords(
-                tenders
-            )
-
-            logger.warning(
-                "%s: loaded=%s filtered=%s",
-                self.source,
-                len(tenders),
-                len(filtered),
-            )
-
-            for tender in filtered:
-                logger.warning(
-                     "MATCH %s | %s | %s",
-                    self.source,
-                    tender.title,
-                    tender.published_at,
-                )
-
-            return ScrapeResult(
-                source=self.source,
-                tenders=filtered,
-            )
-
+            await page.goto(self.url, wait_until="domcontentloaded", timeout=max(self.timeout_ms, 120_000))
+            raw = await self.scrape_page(page)
+            # Apply hard limit BEFORE keyword / date filtering
+            raw = raw[: self.max_tenders]
+            filtered = self._filter(raw)
+            logger.info("%s: scraped=%s after_filter=%s", self.source, len(raw), len(filtered))
+            return ScrapeResult(source=self.source, tenders=filtered)
         except Exception as exc:
-            logger.exception(
-                "Scraper %s failed",
-                self.source,
-            )
-
-            return ScrapeResult(
-                source=self.source,
-                tenders=[],
-                error=str(exc),
-            )
-
+            logger.exception("Scraper %s failed", self.source)
+            return ScrapeResult(source=self.source, tenders=[], error=str(exc))
         finally:
             await page.close()
 
     @abstractmethod
     async def scrape_page(self, page: Page) -> list[Tender]:
-        """Extract tenders from an already opened portal page."""
+        """Extract raw tenders from the already-opened portal page."""
 
-    def keyword_matches(self, tender: Tender) -> list[str]:
+    # ------------------------------------------------------------------
+    # Filtering
+    # ------------------------------------------------------------------
+
+    def _filter(self, tenders: list[Tender]) -> list[Tender]:
+        cutoff = datetime.now() - timedelta(days=14)
+        result: list[Tender] = []
+        for tender in tenders:
+            # 1. Reject Slovak / Polish tenders
+            if _is_foreign(tender):
+                logger.debug("SKIP foreign: %s", tender.title)
+                continue
+            # 2. Must match at least one keyword
+            matches = self._keyword_matches(tender)
+            if not matches:
+                continue
+            # 3. Date check – if no date, keep it (we cannot know)
+            if tender.published_at:
+                published = self._parse_date(tender.published_at)
+                if published and published < cutoff:
+                    logger.debug("SKIP old (%s): %s", tender.published_at, tender.title)
+                    continue
+            tender.matched_keywords = matches
+            result.append(tender)
+        return result
+
+    def _keyword_matches(self, tender: Tender) -> list[str]:
         haystack = normalize_text(
             " ".join(part or "" for part in (tender.title, tender.description, tender.authority))
         )
-        return [keyword for keyword in self.keywords if normalize_text(keyword) in haystack]
+        return [kw for kw in self.keywords if normalize_text(kw) in haystack]
 
+    @staticmethod
+    def _parse_date(value: str) -> datetime | None:
+        for fmt in ("%d.%m.%Y", "%d.%m.%Y %H:%M", "%d.%m.%Y %H:%M:%S", "%Y-%m-%d", "%Y-%m-%dT%H:%M:%S"):
+            try:
+                return datetime.strptime(value.strip()[:19], fmt)
+            except ValueError:
+                pass
+        return None
 
-    def filter_by_keywords(self, tenders: list[Tender]) -> list[Tender]:
-        from datetime import datetime, timedelta
-
-        logger.warning("FILTER CALLED %s", len(tenders))
-        
-        filtered: list[Tender] = []
-        
-        cutoff = datetime.now() - timedelta(days=14)
-
-        for tender in tenders:
-            matches = self.keyword_matches(tender)
-
-            if tender.external_id == "78046":
-                logger.warning(
-                    "78046 FILTER title=%s published=%s matches=%s",
-                    tender.title,
-                    tender.published_at,
-                    matches,
-                )
-
-            if not matches:
-                continue
-
-            if not tender.published_at:
-                tender.matched_keywords = matches
-                filtered.append(tender)
-                continue
-
-            date_text = tender.published_at.strip()
-
-            published = None
-
-            formats = [
-                "%d.%m.%Y",
-                "%d.%m.%Y %H:%M",
-                "%d.%m.%Y %H:%M:%S",
-                "%Y-%m-%d",
-                "%Y-%m-%d %H:%M:%S",
-            ]
-
-            for fmt in formats:
-                try:
-                    published = datetime.strptime(date_text[:19], fmt)
-                    break
-                except ValueError:
-                    pass
-
-            if not published:
-                continue
-
-            logger.warning(
-                "DATECHECK %s | published=%s | cutoff=%s",
-                tender.title,
-                published,
-                cutoff,
-            )
-
-            if tender.external_id == "78046":
-                logger.warning(
-                    "78046 DATECHECK published=%s cutoff=%s",
-                    published,
-                    cutoff,
-                )
-
-            if published < cutoff:
-                logger.warning("SKIPPING OLD %s", tender.title)
-                continue
-
-            if not published:
-                logger.warning("NO DATE %s", tender.title)
-
-            tender.matched_keywords = matches
-            filtered.append(tender)
-
-        return filtered
-
-    async def collect_link_tenders(self, page: Page, link_selector: str) -> list[Tender]:
-        """Collect visible tender links from a page."""
-        items: list[Tender] = []
-        links = await page.locator(link_selector).all()
-        for link in links:
-            title = self.clean_text(await link.inner_text())
-            href = await link.get_attribute("href")
-            if not title or not href:
-                continue
-            items.append(
-                Tender(
-                    source=self.source,
-                    title=title,
-                    url=self.absolute_url(page.url, href),
-                )
-            )
-        return self.deduplicate_tenders(items)
+    # ------------------------------------------------------------------
+    # Page-collection helpers
+    # ------------------------------------------------------------------
 
     async def collect_table_tenders(
         self,
@@ -249,35 +199,22 @@ class BaseScraper(ABC):
         table_xpath: str,
         *,
         detail_selector: str = DETAIL_LINK_SELECTOR,
-        open_detail: bool = True,
+        open_detail: bool = False,
     ) -> list[Tender]:
         tenders: list[Tender] = []
         rows = await page.locator(f"xpath={table_xpath}//tr[td]").all()
-        headers = await self.table_headers(page, table_xpath)
+        headers = await self._table_headers(page, table_xpath)
         for row in rows:
             cells = [self.clean_text(await cell.inner_text()) for cell in await row.locator("td").all()]
             if not any(cells):
                 continue
-            tender = await self.tender_from_cells(
-                row=row,
-                cells=cells,
-                headers=headers,
-                current_url=page.url,
-                detail_selector=detail_selector,
-            )
+            tender = await self._tender_from_cells(row, cells, headers, page.url, detail_selector)
             if tender is None:
                 continue
             if open_detail:
-                await self.enrich_from_detail(page, tender)
-            logger.warning(
-                "RAW %s | %s | %s",
-                self.source,
-                tender.title,
-                tender.published_at,
-            )
+                await self._enrich_from_detail(page, tender)
             tenders.append(tender)
         return self.deduplicate_tenders(tenders)
-
 
     async def collect_card_tenders(
         self,
@@ -285,18 +222,15 @@ class BaseScraper(ABC):
         container_selector: str,
         *,
         detail_selector: str = DETAIL_LINK_SELECTOR,
-        open_detail: bool = True,
+        open_detail: bool = False,
     ) -> list[Tender]:
         tenders: list[Tender] = []
-        containers = await page.locator(container_selector).all()
-        for container in containers:
+        for container in await page.locator(container_selector).all():
             text = self.clean_text(await container.inner_text())
             if not text:
                 continue
-            url = await self.first_row_url(container, page.url, detail_selector)
-            title = await self.first_row_link_text(container, detail_selector)
-            if not title:
-                title = self.first_line(text)
+            url = await self._first_href(container, page.url, detail_selector)
+            title = await self._first_link_text(container, detail_selector) or self.first_line(text)
             if not title or not url:
                 continue
             tender = Tender(
@@ -304,91 +238,15 @@ class BaseScraper(ABC):
                 title=title,
                 url=url,
                 authority=self.value_after_text_label(text, ("Zadavatel", "Název zadavatele", "Organizace")),
-                published_at=self.value_after_label(
-                    text,
-                    ("Datum uveřejnění", "Datum zveřejnění", "Zveřejněno", "Uveřejněno"),
-                ),
-                deadline_at=self.value_after_label(
-                    text,
-                    ("Lhůta pro podání nabídek", "Lhůta", "Termín podání", "Konec lhůty"),
-                ),
+                published_at=self.value_after_label(text, ("Datum uveřejnění", "Datum zveřejnění", "Zveřejněno", "Uveřejněno")),
+                deadline_at=self.value_after_label(text, ("Lhůta pro podání nabídek", "Lhůta", "Termín podání", "Konec lhůty")),
                 external_id=self.detect_external_id(text.splitlines()),
                 description=text,
             )
             if open_detail:
-                await self.enrich_from_detail(page, tender)
+                await self._enrich_from_detail(page, tender)
             tenders.append(tender)
         return self.deduplicate_tenders(tenders)
-
-    async def table_headers(self, page: Page, table_xpath: str) -> list[str]:
-        header_cells = await page.locator(f"xpath={table_xpath}//tr[th][1]/th").all()
-        return [normalize_text(await cell.inner_text()) for cell in header_cells]
-
-    async def tender_from_cells(
-        self,
-        *,
-        row: Locator,
-        cells: list[str],
-        headers: list[str],
-        current_url: str,
-        detail_selector: str = DETAIL_LINK_SELECTOR,
-    ) -> Tender | None:
-        title = self.value_by_header(cells, headers, TITLE_HEADER_ALIASES)
-        authority = self.value_by_header(cells, headers, AUTHORITY_HEADER_ALIASES)
-        publication_date = self.first_date(self.value_by_header(cells, headers, PUBLICATION_HEADER_ALIASES))
-        deadline = self.first_date(self.value_by_header(cells, headers, DEADLINE_HEADER_ALIASES))
-        external_id = self.first_line(self.value_by_header(cells, headers, ID_HEADER_ALIASES))
-        url = await self.first_row_url(row, current_url, detail_selector)
-
-        if not title:
-            title = await self.first_row_link_text(row, detail_selector)
-        if not authority:
-            authority = self.detect_authority_from_cells(cells, title)
-        if not deadline:
-            deadline = self.detect_deadline_from_cells(cells)
-        if not publication_date:
-            publication_date = self.detect_publication_from_cells(cells)
-        if not external_id:
-            external_id = self.detect_external_id(cells)
-
-        if not title or not url:
-            return None
-
-        return Tender(
-            source=self.source,
-            title=self.first_line(title),
-            authority=self.first_line(authority) or None,
-            published_at=publication_date,
-            deadline_at=deadline,
-            url=url,
-            external_id=external_id or None,
-            description=" ".join(cells),
-        )
-
-    async def enrich_from_detail(self, page: Page, tender: Tender) -> None:
-        context = await page.context.browser.new_context()
-        detail_page = await context.new_page()
-        detail_page.set_default_timeout(self.timeout_ms)
-        try:
-            await detail_page.goto(tender.url, wait_until="domcontentloaded")
-            await detail_page.wait_for_selector("body", state="attached", timeout=self.timeout_ms)
-            text = self.clean_text(await detail_page.locator("body").inner_text())
-            if not tender.published_at:
-                tender.published_at = self.value_after_label(
-                    text,
-                    ("Datum uveřejnění", "Datum zveřejnění", "Zveřejněno", "Uveřejněno", "Datum prvního uveřejnění"),
-                )
-            if not tender.deadline_at:
-                tender.deadline_at = self.value_after_label(
-                    text,
-                    ("Lhůta pro podání nabídek", "Lhůta podání nabídek", "Konec lhůty", "Termín podání"),
-                )
-            if not tender.authority:
-                tender.authority = self.value_after_text_label(text, ("Zadavatel", "Název zadavatele"))
-            if not tender.description:
-                tender.description = text
-        finally:
-            await context.close()
 
     async def goto_next_page(self, page: Page, visited_urls: set[str]) -> bool:
         next_link = page.locator(NEXT_PAGE_SELECTOR).last
@@ -396,8 +254,8 @@ class BaseScraper(ABC):
             return False
         disabled = await next_link.get_attribute("disabled")
         aria_disabled = await next_link.get_attribute("aria-disabled")
-        class_name = await next_link.get_attribute("class")
-        if disabled is not None or aria_disabled == "true" or "disabled" in (class_name or "").lower():
+        class_attr = await next_link.get_attribute("class") or ""
+        if disabled is not None or aria_disabled == "true" or "disabled" in class_attr.lower():
             return False
         href = await next_link.get_attribute("href")
         if href and href != "#":
@@ -410,40 +268,117 @@ class BaseScraper(ABC):
         await page.wait_for_load_state("domcontentloaded")
         return page.url not in visited_urls
 
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    async def _table_headers(self, page: Page, table_xpath: str) -> list[str]:
+        cells = await page.locator(f"xpath={table_xpath}//tr[th][1]/th").all()
+        return [normalize_text(await c.inner_text()) for c in cells]
+
+    async def _tender_from_cells(
+        self,
+        row: Locator,
+        cells: list[str],
+        headers: list[str],
+        current_url: str,
+        detail_selector: str,
+    ) -> Tender | None:
+        title = self._col(cells, headers, TITLE_HEADER_ALIASES)
+        authority = self._col(cells, headers, AUTHORITY_HEADER_ALIASES)
+        published = self.first_date(self._col(cells, headers, PUBLICATION_HEADER_ALIASES))
+        deadline = self.first_date(self._col(cells, headers, DEADLINE_HEADER_ALIASES))
+        external_id = self.first_line(self._col(cells, headers, ID_HEADER_ALIASES))
+        url = await self._first_href(row, current_url, detail_selector)
+
+        if not title:
+            title = await self._first_link_text(row, detail_selector)
+        if not authority:
+            authority = self._authority_from_cells(cells, title)
+        if not deadline:
+            deadline = self._deadline_from_cells(cells)
+        if not published:
+            published = self._published_from_cells(cells)
+        if not external_id:
+            external_id = self.detect_external_id(cells)
+
+        if not title or not url:
+            return None
+
+        return Tender(
+            source=self.source,
+            title=self.first_line(title),
+            authority=self.first_line(authority) or None,
+            published_at=published,
+            deadline_at=deadline,
+            url=url,
+            external_id=external_id or None,
+            description=" ".join(cells),
+        )
+
+    async def _enrich_from_detail(self, page: Page, tender: Tender) -> None:
+        ctx = await page.context.browser.new_context()
+        detail = await ctx.new_page()
+        detail.set_default_timeout(self.timeout_ms)
+        try:
+            await detail.goto(tender.url, wait_until="domcontentloaded")
+            await detail.wait_for_selector("body", state="attached", timeout=self.timeout_ms)
+            text = self.clean_text(await detail.locator("body").inner_text())
+            if not tender.published_at:
+                tender.published_at = self.value_after_label(
+                    text, ("Datum uveřejnění", "Datum zveřejnění", "Zveřejněno", "Uveřejněno", "Datum prvního uveřejnění")
+                )
+            if not tender.deadline_at:
+                tender.deadline_at = self.value_after_label(
+                    text, ("Lhůta pro podání nabídek", "Lhůta podání nabídek", "Konec lhůty", "Termín podání")
+                )
+            if not tender.authority:
+                tender.authority = self.value_after_text_label(text, ("Zadavatel", "Název zadavatele"))
+            if not tender.description:
+                tender.description = text
+        except Exception:
+            logger.debug("Could not enrich detail for %s", tender.url)
+        finally:
+            await ctx.close()
+
+    # ------------------------------------------------------------------
+    # Static / class helpers
+    # ------------------------------------------------------------------
+
     @staticmethod
-    def value_by_header(cells: list[str], headers: list[str], aliases: tuple[str, ...]) -> str:
-        normalized_aliases = tuple(normalize_text(alias) for alias in aliases)
-        for index, header in enumerate(headers):
-            if index >= len(cells):
+    def _col(cells: list[str], headers: list[str], aliases: tuple[str, ...]) -> str:
+        norm_aliases = tuple(normalize_text(a) for a in aliases)
+        for i, header in enumerate(headers):
+            if i >= len(cells):
                 continue
-            if any(alias in header for alias in normalized_aliases):
-                return cells[index]
+            if any(a in header for a in norm_aliases):
+                return cells[i]
         return ""
 
     @classmethod
-    def detect_deadline_from_cells(cls, cells: list[str]) -> str | None:
+    def _deadline_from_cells(cls, cells: list[str]) -> str | None:
         for cell in reversed(cells):
-            if any(label in normalize_text(cell) for label in ("lhuta", "termin", "deadline", "nabidek")):
-                date = cls.first_date(cell)
-                if date:
-                    return date
+            if any(lbl in normalize_text(cell) for lbl in ("lhuta", "termin", "deadline", "nabidek")):
+                d = cls.first_date(cell)
+                if d:
+                    return d
         for cell in reversed(cells):
-            date = cls.first_date(cell)
-            if date:
-                return date
+            d = cls.first_date(cell)
+            if d:
+                return d
         return None
 
     @classmethod
-    def detect_publication_from_cells(cls, cells: list[str]) -> str | None:
+    def _published_from_cells(cls, cells: list[str]) -> str | None:
         for cell in cells:
-            if any(label in normalize_text(cell) for label in ("zverej", "uverej", "publik")):
-                date = cls.first_date(cell)
-                if date:
-                    return date
+            if any(lbl in normalize_text(cell) for lbl in ("zverej", "uverej", "publik")):
+                d = cls.first_date(cell)
+                if d:
+                    return d
         return None
 
     @staticmethod
-    def detect_authority_from_cells(cells: list[str], title: str) -> str:
+    def _authority_from_cells(cells: list[str], title: str) -> str:
         for cell in cells:
             if cell and cell != title and not DATE_RE.search(cell) and len(cell) > 3:
                 return BaseScraper.first_line(cell)
@@ -458,7 +393,7 @@ class BaseScraper(ABC):
         return ""
 
     @staticmethod
-    async def first_row_url(row: Locator, current_url: str, detail_selector: str) -> str | None:
+    async def _first_href(row: Locator, current_url: str, detail_selector: str) -> str | None:
         link = row.locator(detail_selector).first
         if not await link.count():
             link = row.locator("a[href]").first
@@ -466,7 +401,7 @@ class BaseScraper(ABC):
         return BaseScraper.absolute_url(current_url, href) if href else None
 
     @staticmethod
-    async def first_row_link_text(row: Locator, detail_selector: str) -> str:
+    async def _first_link_text(row: Locator, detail_selector: str) -> str:
         link = row.locator(detail_selector).first
         if not await link.count():
             link = row.locator("a[href]").first
@@ -474,10 +409,9 @@ class BaseScraper(ABC):
 
     @staticmethod
     def value_after_label(text: str, labels: tuple[str, ...]) -> str | None:
-        normalized = BaseScraper.clean_text(text)
         for label in labels:
             pattern = re.compile(rf"{re.escape(label)}\s*:?\s*({DATE_RE.pattern})", re.IGNORECASE)
-            match = pattern.search(normalized)
+            match = pattern.search(BaseScraper.clean_text(text))
             if match:
                 return BaseScraper.first_date(match.group(1))
         return None
@@ -485,10 +419,10 @@ class BaseScraper(ABC):
     @staticmethod
     def value_after_text_label(text: str, labels: tuple[str, ...]) -> str | None:
         lines = [line.strip() for line in text.splitlines() if line.strip()]
-        normalized_labels = tuple(normalize_text(label) for label in labels)
-        for index, line in enumerate(lines[:-1]):
-            if any(label == normalize_text(line).rstrip(":") for label in normalized_labels):
-                return lines[index + 1]
+        norm_labels = tuple(normalize_text(l) for l in labels)
+        for i, line in enumerate(lines[:-1]):
+            if any(lbl == normalize_text(line).rstrip(":") for lbl in norm_labels):
+                return lines[i + 1]
         return None
 
     @staticmethod
@@ -496,9 +430,7 @@ class BaseScraper(ABC):
         if not value:
             return None
         match = DATE_RE.search(value.replace("\xa0", " "))
-        if not match:
-            return None
-        return re.sub(r"\s+", " ", match.group(0)).strip()
+        return re.sub(r"\s+", " ", match.group(0)).strip() if match else None
 
     @staticmethod
     def first_line(value: str | None) -> str:
@@ -523,10 +455,11 @@ class BaseScraper(ABC):
     def deduplicate_tenders(tenders: list[Tender]) -> list[Tender]:
         seen: set[str] = set()
         unique: list[Tender] = []
-        for tender in tenders:
-            key = tender.url or f"{tender.source}|{tender.title}|{tender.authority}"
-            if key in seen:
-                continue
-            seen.add(key)
-            unique.append(tender)
+        for t in tenders:
+            key = t.url or f"{t.source}|{t.title}|{t.authority}"
+            if key not in seen:
+                seen.add(key)
+                unique.append(t)
         return unique
+PYEOF
+echo "base.py OK"
