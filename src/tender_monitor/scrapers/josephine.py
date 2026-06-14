@@ -42,7 +42,6 @@ class JosephineScraper(BaseScraper):
         tenders: list[Tender] = []
         visited_urls: set[str] = set()
         empty_pages = 0   # počet stránek bez jediné relevantní zakázky
-        old_date_pages = 0  # počet stránek kde jsou jen staré zakázky
 
         for page_num in range(self.max_pages):
             if page.url in visited_urls:
@@ -109,41 +108,10 @@ class JosephineScraper(BaseScraper):
             if stop_crawling:
                 break
 
-            # Zkontrolujeme datum nejstarší zakázky na stránce – 
-            # pokud jsou všechny zakázky starší než cutoff, zastavíme se
-            # (JOSEPHINE řadí od nejnovějších)
-            from datetime import datetime, timedelta
-            cutoff_stop = datetime.now() - timedelta(days=180)
-            all_old = True
-            for row2 in rows:
-                cells2 = [self._clean(await c.inner_text()) for c in await row2.locator("td").all()]
-                if len(cells2) > 8:
-                    d = self._date(cells2[8])
-                    if d:
-                        try:
-                            parsed = datetime.strptime(d[:10], "%d.%m.%Y")
-                            if parsed >= cutoff_stop:
-                                all_old = False
-                                break
-                        except Exception:
-                            all_old = False
-                            break
-                    else:
-                        all_old = False
-                        break
-
-            if all_old and len(rows) > 0:
-                old_date_pages += 1
-                if old_date_pages >= 2:
-                    logger.info("JOSEPHINE: zakázky jsou příliš staré – zastavuji na stránce %s", page_num + 1)
-                    break
-            else:
-                old_date_pages = 0
-
             if found_on_page == 0:
                 empty_pages += 1
                 if empty_pages >= 20:
-                    logger.info("JOSEPHINE: 20 prázdných stránek za sebou – zastavuji")
+                    logger.info("JOSEPHINE: 20 prázdných stránek za sebou – zastavuji na stránce %s", page_num + 1)
                     break
             else:
                 empty_pages = 0

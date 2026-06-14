@@ -20,11 +20,16 @@ class NenScraper(BaseScraper):
         visited_urls: set[str] = set()
         table_xpath = "//table[.//th[contains(normalize-space(.), 'Název zadávacího postupu')]]"
 
-        # NEN potřebuje čekat na plné načtení (JavaScript renderuje tabulku)
+        # NEN používá JavaScript – počkáme na tabulku (max 60s)
         try:
-            await page.wait_for_load_state("networkidle", timeout=60_000)
+            await page.wait_for_selector(
+                f"xpath={table_xpath}",
+                state="attached",
+                timeout=60_000,
+            )
         except Exception:
-            logger.warning("NEN: networkidle timeout, pokračuji")
+            logger.warning("NEN: tabulka se nenačetla – přeskakuji")
+            return []
 
         for _ in range(self.max_pages):
             if len(tenders) >= self.max_tenders:
