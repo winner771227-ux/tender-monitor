@@ -1,5 +1,4 @@
-cat > /home/claude/tm/src/tender_monitor/scrapers/base.py << 'PYEOF'
-"""Base class and shared helpers for all tender scrapers."""
+
 from __future__ import annotations
 
 import logging
@@ -461,5 +460,3 @@ class BaseScraper(ABC):
                 seen.add(key)
                 unique.append(t)
         return unique
-PYEOF
-echo "base.py OK"
