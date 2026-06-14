@@ -96,11 +96,24 @@ class JosephineScraper(BaseScraper):
                     continue
 
                 # Datum z detailu pokud není v tabulce
-                if not tender.published_at:
-                    tender.published_at = await self._get_pub_date(page, tender.url)
+                # 1. Odmítnout SK/PL zakázky okamžitě
+                from tender_monitor.scrapers.base import _is_foreign
+                if _is_foreign(tender):
+                    logger.debug("JOSEPHINE SKIP foreign [%s]: %s", keyword, tender.title[:50])
+                    continue
 
-                # Zakázka byla nalezena vyhledáváním tohoto klíčového slova
-                # Přidáme ho do matched_keywords aby base._filter nevyhodil zakázku
+                # 2. Klíčové slovo musí být v názvu nebo autoritě (přísný check)
+                from tender_monitor.dedupe import normalize_text as _norm
+                haystack = _norm((tender.title or "") + " " + (tender.authority or ""))
+                kw_norm = _norm(keyword)
+                if kw_norm not in haystack:
+                    logger.debug("JOSEPHINE SKIP (kw není v názvu) [%s]: %s", keyword, tender.title[:50])
+                    continue
+
+                # Datum zveřejnění není v tabulce – vždy ho načteme z detailní stránky
+                tender.published_at = await self._get_pub_date(page, tender.url)
+
+                # Označíme klíčové slovo
                 if keyword not in tender.matched_keywords:
                     tender.matched_keywords.append(keyword)
 
