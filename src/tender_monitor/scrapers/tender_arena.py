@@ -1,4 +1,4 @@
-"""Scraper for Tender Arena."""
+"""Scraper pro Tender Arena – tenderarena.cz"""
 from __future__ import annotations
 
 import logging
@@ -13,26 +13,35 @@ logger = logging.getLogger(__name__)
 
 class TenderArenaScraper(BaseScraper):
     source = "Tender Arena"
-    url = "https://tenderarena.cz"
+    url = "https://tenderarena.cz/dodavatele/seznam-zakazek/?type=public"
 
     async def scrape_page(self, page: Page) -> list[Tender]:
         tenders: list[Tender] = []
         visited_urls: set[str] = set()
-        table_xpath = "//table[.//th[contains(normalize-space(.), 'Název') or contains(normalize-space(.), 'Zadavatel')]]"
-        detail_selector = "a[href*='verejne-zakazky'], a[href*='zakazka'], a[href*='detail'], a:has-text('Detail')"
+        table_xpath = (
+            "//table[.//th[contains(normalize-space(.), 'Název') "
+            "or contains(normalize-space(.), 'Zadavatel') "
+            "or contains(normalize-space(.), 'Zakázka')]]"
+        )
 
         for _ in range(self.max_pages):
             if len(tenders) >= self.max_tenders:
                 break
             visited_urls.add(page.url)
-            await page.wait_for_selector("body", state="attached", timeout=self.timeout_ms)
-            batch = await self.collect_table_tenders(page, table_xpath, detail_selector=detail_selector)
+            try:
+                await page.wait_for_selector("body", state="attached", timeout=self.timeout_ms)
+            except Exception:
+                break
+
+            batch = await self.collect_table_tenders(page, table_xpath, detail_selector=DETAIL_LINK_SELECTOR)
             tenders.extend(batch)
             card_batch = await self.collect_card_tenders(
-                page, ".tender, .zakazka, .contract, article, .card, .list-group-item, .list-item", detail_selector=detail_selector
+                page,
+                ".tender-item, .contract-item, .zakazka, article, .card, li.item",
+                detail_selector=DETAIL_LINK_SELECTOR,
             )
             tenders.extend(card_batch)
-            logger.info("Tender Arena page=%s batch=%s total=%s", page.url, len(batch) + len(card_batch), len(tenders))
+            logger.info("Tender Arena page=%s batch=%s total=%s", page.url, len(batch)+len(card_batch), len(tenders))
             if not await self.goto_next_page(page, visited_urls):
                 break
 
