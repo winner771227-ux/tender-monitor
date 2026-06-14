@@ -79,25 +79,41 @@ ID_HEADER_ALIASES = ("systemove cislo", "evidencni cislo", "id", "cislo zakazky"
 # ---------------------------------------------------------------------------
 
 _SK_WORDS = {
-    # Slovenská města a instituce
-    "bratislava", "košice", "prešov", "žilina", "nitra", "trnava", "trenčín", "trencin",
-    "banská bystrica", "banska bystrica",
-    "slovensko", "slovak", "slovenská republika", "slovenska republika",
+    # Slovenská města
+    "bratislava", "košice", "prešov", "zilina", "nitra", "trnava", "trencin", "trenčín",
+    "banska bystrica", "bardejov", "trebisov", "trebišov", "vranov", "poprad",
+    "michalovce", "humenne", "humenné", "roznava", "rožňava",
+    # Slovenský stát
+    "slovensko", "slovak", "slovenska republika", "slovenská republika",
     # Slovenské výrazy ve veřejných zakázkách
-    "zákazka", "zákazky", "zákaziek", "zakazka",
-    "obstarávanie", "obstaravanie", "obstarávateľ", "obstaravatel",
-    "uchádzač", "uchadzac", "súťaž", "sutaz", "verejná súťaž",
-    "námestie", "namestie", "nábrežie",
-    # Slovenské specifické výrazy
-    "koľajníc", "kolajnic", "brúsenie", "brusenie",
-    "pamätník", "pamatnik", "snp",
-    # Slovenské TLD v URL
+    "zakazka", "zakazky", "zakaziek", "zákazka", "zákazky",
+    "obstaravanie", "obstarávanie", "obstaravatel", "obstarávateľ",
+    "uchadzac", "uchádzač", "sutaz", "súťaž", "verejná súťaž",
+    # Slovenská gramatika – předložky a koncovky typické pro slovenštinu
+    " pre zavod", " pre analyzu", " pre analyzu", " pri ms", " pri zs",
+    "dns vakm", "dns mfsr",
+    # Slovenská slova která se v češtině nevyskytují
+    "zariadeni", "zariadenia", "zariadenie",   # zařízení
+    "vodicov", "vodičov",                        # řidičů
+    "rozsirovanie", "rozširenie", "rozšírenie",  # rozšíření
+    "zvaranie", "zváranie",                      # svařování
+    "kolajovych", "koľajových", "kolajnic", "koľajníc",
+    "polne", "poľné", "polnych", "poľných",      # polní
+    "lesnicke", "lesnícke",
+    "namestie", "námestie", "naberezie", "nábrežie",
+    "pamatnik", "pamätník",
+    "brusenie", "brúsenie",
+    "eurominci", "euromincí",
+    "socialnych", "sociálnych",
+    "detekčna", "detekčná", "detekčne", "detekčné",
 }
 
 _PL_WORDS = {
-    "zamówienie", "zamówień", "przetarg", "zamawiający",
-    "wykonawca", "oferta", "polska", "rzeczpospolita",
-    "warszawa", "kraków", "wrocław", "gdansk", "poznan",
+    "zamowienie", "zamówienie", "zamówień", "przetarg", "zamawiajacy", "zamawiający",
+    "wykonawca", "rzeczpospolita", "warszawa", "krakow", "kraków", "wroclaw", "wrocław",
+    # Polská slova z logu
+    "zapytanie", "ofertowe", "jednorazowa", "dostawa",
+    "czerpania", "punktow", "punktów", "budowy",
 }
 
 
