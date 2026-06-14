@@ -46,4 +46,3 @@ class VvzScraper(BaseScraper):
                 break
 
         return self.deduplicate_tenders(tenders)
-PYEOF
