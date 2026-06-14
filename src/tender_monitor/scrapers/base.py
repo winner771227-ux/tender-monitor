@@ -154,13 +154,7 @@ class BaseScraper(ABC):
     def _filter(self, tenders: list[Tender]) -> list[Tender]:
         cutoff = datetime.now() - timedelta(days=14)
         result: list[Tender] = []
-        
-        logger.warning(
-            "FILTER CHECK: %s | published=%s",
-            tender.title,
-            tender.published_at,
-        )
-
+                
             # 1. Reject Slovak / Polish tenders
             if _is_foreign(tender):
                 logger.debug("SKIP foreign: %s", tender.title)
