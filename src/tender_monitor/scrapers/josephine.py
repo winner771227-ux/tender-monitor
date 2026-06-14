@@ -7,33 +7,25 @@ from urllib.parse import urljoin
 
 from playwright.async_api import Page
 
-from tender_monitor.dedupe import normalize_text
 from tender_monitor.models import Tender
 from tender_monitor.scrapers.base import BaseScraper
 
 logger = logging.getLogger(__name__)
 
-_DATE_RE = re.compile(r"\b\d{2}\.\d{2}\.\d{4}(?:\s+\d{2}:\d{2}:\d{2})?\b")
+_DATE_RE = re.compile(r"\b(\d{2})\.(\d{2})\.(\d{4})(?:\s+\d{2}:\d{2}(?::\d{2})?)?\b")
 
-# Štítky pro datum zveřejnění na detailní stránce JOSEPHINE
+# Štítky pro datum zveřejnění na detailní stránce
 _PUB_LABELS = (
-    "Datum uveřejnění",
-    "Datum zveřejnění",
-    "Zveřejněno",
-    "Uveřejněno",
-    "Datum prvního uveřejnění",
-    "Datum zahájení",
-    "Publication date",
-    "Published",
-    "Vytvořeno",
+    "Datum uveřejnění", "Datum zveřejnění", "Zveřejněno", "Uveřejněno",
+    "Datum prvního uveřejnění", "Datum zahájení", "Publication date", "Vytvořeno",
 )
 
 
 class JosephineScraper(BaseScraper):
     source = "JOSEPHINE"
     url = "https://josephine.proebiz.com/cs/public-tenders/all"
-    # JOSEPHINE řadí zakázky od nejnovějších – stačí prvních 10 stránek (200 zakázek)
-    # Starší zakázky jsou na stránkách 100+ a tam nenajdeme nic relevantního
+    # JOSEPHINE řadí od nejnovějších – 10 stránek = 200 nejnovějších zakázek
+    # Na stránce 583+ jsou zakázky z roku 2019 – tam se nedostaneme
     max_pages = 10
     max_tenders = 200
 
@@ -41,8 +33,12 @@ class JosephineScraper(BaseScraper):
         tenders: list[Tender] = []
         visited_urls: set[str] = set()
 
-        while page.url not in visited_urls:
+        # for _ in range() = respektuje max_pages
+        for _ in range(self.max_pages):
+            if page.url in visited_urls:
+                break
             visited_urls.add(page.url)
+
             await self._wait_table(page)
             rows = await self._rows(page)
             logger.info("JOSEPHINE page=%s rows=%s", page.url, len(rows))
@@ -50,6 +46,7 @@ class JosephineScraper(BaseScraper):
             for row in rows:
                 if len(tenders) >= self.max_tenders:
                     break
+
                 cells = [
                     self._clean(await cell.inner_text())
                     for cell in await row.locator("td").all()
@@ -67,12 +64,13 @@ class JosephineScraper(BaseScraper):
                 if not self._keyword_matches(tender):
                     continue
 
-                # Načteme datum zveřejnění z detailu – ale POUZE z konkrétních štítků
-                # Nikdy nepoužíváme "nejstarší datum na stránce" – bylo by chybné
-                tender.published_at = await self._get_pub_date(page, tender.url)
+                # Pokus o zjištění data z detailní stránky (jen pokud nemáme datum z tabulky)
+                if not tender.published_at:
+                    tender.published_at = await self._get_pub_date(page, tender.url)
+
                 logger.info(
-                    "JOSEPHINE tender=%s published=%s",
-                    tender.title[:50], tender.published_at,
+                    "JOSEPHINE tender=%s published=%s deadline=%s",
+                    tender.title[:50], tender.published_at, tender.deadline_at,
                 )
                 tenders.append(tender)
 
@@ -88,11 +86,7 @@ class JosephineScraper(BaseScraper):
         return tenders
 
     async def _get_pub_date(self, page: Page, tender_url: str) -> str | None:
-        """Načte datum zveřejnění z detailní stránky zakázky.
-        
-        Hledáme POUZE u konkrétních štítků – nikdy nevracíme libovolné 
-        datum ze stránky, protože by mohlo být staré (patička, dokumenty z roku 2019 atd.).
-        """
+        """Načte datum zveřejnění z detailní stránky – hledá POUZE u konkrétních štítků."""
         ctx = await page.context.browser.new_context()
         detail = await ctx.new_page()
         detail.set_default_timeout(self.timeout_ms)
@@ -102,31 +96,27 @@ class JosephineScraper(BaseScraper):
             text = await detail.locator("body").inner_text()
 
             for label in _PUB_LABELS:
-                # Hledáme vzor: "Datum uveřejnění: 02.06.2026" nebo "Datum uveřejnění\n02.06.2026"
+                # Vzor 1: "Datum uveřejnění: 02.06.2026" na stejném řádku
                 pattern = re.compile(
                     rf"{re.escape(label)}\s*:?\s*(\d{{2}}\.\d{{2}}\.\d{{4}}(?:\s+\d{{2}}:\d{{2}}:\d{{2}})?)",
                     re.IGNORECASE,
                 )
                 m = pattern.search(text)
                 if m:
-                    found = m.group(1).strip()
-                    logger.info("JOSEPHINE date via label '%s': %s", label, found)
-                    return found
+                    logger.info("JOSEPHINE date via label '%s': %s", label, m.group(1))
+                    return m.group(1).strip()
 
-                # Alternativa: štítek na jednom řádku, datum na dalším
+                # Vzor 2: štítek na jednom řádku, datum na dalším
                 lines = text.splitlines()
-                for i, line in enumerate(lines[:-1]):
+                for i, line in enumerate(lines[:-3]):
                     if label.lower() in line.lower():
-                        # Hledáme datum na dalším nebo přespříštím řádku
-                        for next_line in lines[i+1:i+4]:
+                        for next_line in lines[i + 1:i + 4]:
                             m2 = _DATE_RE.search(next_line)
                             if m2:
                                 found = m2.group(0).strip()
                                 logger.info("JOSEPHINE date via nextline '%s': %s", label, found)
                                 return found
 
-            # Žádný štítek nenalezen – vrátíme None
-            # Zakázka pak projde filtrem (bez data = zachovat)
             logger.info("JOSEPHINE date not found for %s", tender_url)
             return None
 
@@ -164,6 +154,15 @@ class JosephineScraper(BaseScraper):
         title = cls._line(cells[2])
         authority = cls._line(cells[5]) if len(cells) > 5 else ""
         deadline = cls._date(cells[8]) if len(cells) > 8 else None
+        # Datum zveřejnění může být v různých sloupcích – zkusíme najít v cells
+        published = None
+        for i in [3, 4, 6, 7]:
+            if i < len(cells):
+                d = cls._date(cells[i])
+                if d:
+                    published = d
+                    break
+
         url = (
             urljoin(current_url, href)
             if href
@@ -180,6 +179,7 @@ class JosephineScraper(BaseScraper):
             title=title,
             url=url,
             authority=authority or None,
+            published_at=published,
             deadline_at=deadline,
             external_id=external_id or None,
         )
