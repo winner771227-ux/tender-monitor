@@ -30,7 +30,7 @@ _NEN_PROFILE_URL = "https://nen.nipez.cz/profil/ASPO"
 class AspoScraper(BaseScraper):
     source = "ASPO"
     url = _NEN_PROFILE_URL
-    max_pages = 2
+    max_pages = 1
 
     async def scrape(self, browser) -> ScrapeResult:
         """Nejdřív zkusíme XML feed, pak Playwright jako zálohu."""
@@ -52,7 +52,7 @@ class AspoScraper(BaseScraper):
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/125.0.0.0",
                 "Accept": "application/xml, text/xml, */*",
             })
-            with urllib.request.urlopen(req, timeout=30) as r:
+            with urllib.request.urlopen(req, timeout=10) as r:
                 data = r.read()
 
             root = ET.fromstring(data)
