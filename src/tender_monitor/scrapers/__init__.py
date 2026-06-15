@@ -18,7 +18,7 @@ SCRAPER_CLASSES = (
 
     # ⚠️ ČÁSTEČNĚ – přidáváme ale mohou vracet 0
     EvezaScraper,           # eVeZa – vyhledávání funguje, výsledky se ověřují
-    VhodneUverejneniScraper,  # Vhodné uveřejnění – agregátor všech CZ profilů
+    # VhodneUverejneniScraper,  # Vhodné uveřejnění – timeout na GitHub Actions
 
     # ❌ DEAKTIVOVÁNO – nemají centrální vyhledávání nebo timeout
     # TenderArenaScraper,   # Tender Arena – pouze profily zadavatelů, ne centrální vyhledávání
