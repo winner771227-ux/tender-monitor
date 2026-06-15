@@ -24,7 +24,7 @@ class ProfilZadavateleVzScraper(BaseScraper):
 
     async def scrape_page(self, page: Page) -> list[Tender]:
         all_tenders: list[Tender] = []
-        date_from = (datetime.now() - timedelta(days=14)).strftime("%d.%m.%Y")
+        date_from = (datetime.now() - timedelta(days=30)).strftime("%d.%m.%Y")
 
         for keyword in self.keywords:
             url = _SEARCH_URL.format(keyword=quote(keyword), date_from=date_from)

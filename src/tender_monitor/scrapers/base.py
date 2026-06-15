@@ -192,8 +192,8 @@ class BaseScraper(ABC):
 
     def _filter(self, tenders: list[Tender]) -> list[Tender]:
         now = datetime.now()
-        # Pouze zakázky zveřejněné v posledních 14 dnech
-        cutoff = now - timedelta(days=14)
+        # Zakázky zveřejněné v posledních 30 dnech
+        cutoff = now - timedelta(days=30)
         result: list[Tender] = []
         for tender in tenders:
             # 1. Odmítnout slovenské a polské zakázky

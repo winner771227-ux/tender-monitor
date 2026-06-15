@@ -17,12 +17,11 @@ DEFAULT_KEYWORDS = (
     "demoliční",
     "likvidace stavby",
     "likvidace objektu",
-    # Rozšíření pro portály kde je název zakázky obecný
-    "odstranění",
+    # Doplňující výrazy
     "asanace",
     "sanace objektu",
     "zbourání",
-    "zbouráni",
+    "odstranění stavby",  # záloha pro varianty bez diakritiky
 )
 
 

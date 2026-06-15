@@ -36,7 +36,7 @@ class JosephineScraper(BaseScraper):
     async def scrape_page(self, page: Page) -> list[Tender]:
         all_tenders: list[Tender] = []
         # Pouze zakázky zveřejněné v posledních 14 dnech
-        date_from = (datetime.now() - timedelta(days=14)).strftime("%Y-%m-%d")
+        date_from = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
 
         for keyword in self.keywords:
             search_url = _SEARCH_URL.format(keyword=quote(keyword), date_from=date_from)
