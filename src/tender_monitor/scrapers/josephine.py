@@ -1,15 +1,14 @@
 """Scraper pro JOSEPHINE – josephine.proebiz.com
 
-Používá vyhledávání s řazením podle data zveřejnění (nejnovější první).
-Pro každé klíčové slovo projde prvních 5 stránek výsledků.
-Tím se vyhne procházení všech 596 stránek.
+Prohledává pomocí vyhledávání s filtrem data zveřejnění.
+URL parametr dateFrom omezí výsledky na zakázky zveřejněné v posledních 180 dnech.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from urllib.parse import urljoin, quote
 
 from playwright.async_api import Page
@@ -21,33 +20,31 @@ logger = logging.getLogger(__name__)
 
 _DATE_RE = re.compile(r"\b(\d{2})\.(\d{2})\.(\d{4})(?:\s+\d{2}:\d{2}(?::\d{2})?)?\b")
 
-_PUB_LABELS = (
-    "Datum uveřejnění", "Datum zveřejnění", "Zveřejněno", "Uveřejněno",
-    "Datum prvního uveřejnění", "Datum zahájení", "Vytvořeno",
-)
-
-# Vyhledávání JOSEPHINE řazené podle data zveřejnění (nejnovější první)
-# sort=publishedAt&order=desc zajistí, že dostaneme nejnovější výsledky
+# Vyhledávání s filtrem podle data zveřejnění
+# dateFrom omezí na zakázky zveřejněné po daném datu
 _SEARCH_URL = (
     "https://josephine.proebiz.com/cs/public-tenders/all"
-    "?query={keyword}&sort=publishedAt&order=desc"
+    "?query={keyword}&dateFrom={date_from}"
 )
 
 
 class JosephineScraper(BaseScraper):
     source = "JOSEPHINE"
     url = "https://josephine.proebiz.com/cs/public-tenders/all"
-    # Pro každé klíčové slovo projdeme max 10 stránek (200 výsledků)
-    # seřazených od nejnovějších
     max_pages = 10
     max_tenders = 200
 
     async def scrape_page(self, page: Page) -> list[Tender]:
         all_tenders: list[Tender] = []
+        # Datum 180 dní zpět ve formátu YYYY-MM-DD
+        date_from = (datetime.now() - timedelta(days=180)).strftime("%Y-%m-%d")
 
         for keyword in self.keywords:
-            search_url = _SEARCH_URL.format(keyword=quote(keyword))
-            logger.info("JOSEPHINE hledám: %s -> %s", keyword, search_url)
+            search_url = _SEARCH_URL.format(
+                keyword=quote(keyword),
+                date_from=date_from,
+            )
+            logger.info("JOSEPHINE hledám: '%s' od %s -> %s", keyword, date_from, search_url)
             try:
                 await page.goto(search_url, wait_until="domcontentloaded")
                 batch = await self._scrape_keyword(page, keyword)
@@ -75,7 +72,8 @@ class JosephineScraper(BaseScraper):
                     timeout=30_000,
                 )
             except Exception:
-                logger.info("JOSEPHINE keyword='%s' stránka %s: žádná tabulka", keyword, page_num + 1)
+                # Žádné výsledky pro toto klíčové slovo a datum
+                logger.info("JOSEPHINE keyword='%s' stránka %s: žádná tabulka (asi 0 výsledků)", keyword, page_num + 1)
                 break
 
             rows = await page.locator(
@@ -83,6 +81,9 @@ class JosephineScraper(BaseScraper):
             ).all()
             rows = [r for r in rows if len(await r.locator("td").all()) >= 7]
             logger.info("JOSEPHINE keyword='%s' stránka %s: %s řádků", keyword, page_num + 1, len(rows))
+
+            if not rows:
+                break
 
             for row in rows:
                 cells = [self._clean(await c.inner_text()) for c in await row.locator("td").all()]
@@ -97,9 +98,10 @@ class JosephineScraper(BaseScraper):
 
                 # Odmítneme SK/PL zakázky
                 if _is_foreign(tender):
+                    logger.debug("JOSEPHINE SKIP foreign [%s]: %s", keyword, tender.title[:50])
                     continue
 
-                # Označíme klíčové slovo (zakázka nalezena tímto vyhledáváním)
+                # Označíme klíčovým slovem
                 if keyword not in tender.matched_keywords:
                     tender.matched_keywords.append(keyword)
 
@@ -130,7 +132,7 @@ class JosephineScraper(BaseScraper):
         title = cls._line(cells[2])
         authority = cls._line(cells[5]) if len(cells) > 5 else ""
         deadline = cls._date(cells[8]) if len(cells) > 8 else None
-        # Datum v minulosti = datum zveřejnění; datum v budoucnosti = deadline
+        # Datum v minulosti = datum zveřejnění
         published = None
         for cell in cells:
             d = cls._date(cell)
