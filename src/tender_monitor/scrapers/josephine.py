@@ -34,8 +34,8 @@ class JosephineScraper(BaseScraper):
     # Procházíme stránky od nejnovějších – zastavíme se automaticky
     # jakmile nenajdeme žádné nové relevantní zakázky na 3 stránkách za sebou
     # JOSEPHINE má ~600 stránek, demoliční zakázky jsou rozmístěné řídce
-    # Zastavíme se buď po 30 stránkách NEBO když narazíme na staré zakázky
-    max_pages = 30
+    # Zastavíme se po 60 stránkách nebo po 25 prázdných stránkách za sebou
+    max_pages = 60
     max_tenders = 200
 
     async def scrape_page(self, page: Page) -> list[Tender]:
@@ -94,8 +94,12 @@ class JosephineScraper(BaseScraper):
                 if not matches:
                     continue
 
-                # Načteme datum zveřejnění z detailní stránky
-                tender.published_at = await self._get_pub_date(page, tender.url)
+                # Datum zveřejnění z detailní stránky
+                pub = await self._get_pub_date(page, tender.url)
+                if pub:
+                    tender.published_at = pub
+                # Pokud nenajdeme datum zveřejnění, necháme None
+                # -> base._filter zachová zakázku (rule c: datum neznáme)
                 tender.matched_keywords = matches
 
                 logger.info(
@@ -110,8 +114,8 @@ class JosephineScraper(BaseScraper):
 
             if found_on_page == 0:
                 empty_pages += 1
-                if empty_pages >= 20:
-                    logger.info("JOSEPHINE: 20 prázdných stránek za sebou – zastavuji na stránce %s", page_num + 1)
+                if empty_pages >= 25:
+                    logger.info("JOSEPHINE: 25 prázdných stránek za sebou – zastavuji na stránce %s", page_num + 1)
                     break
             else:
                 empty_pages = 0
