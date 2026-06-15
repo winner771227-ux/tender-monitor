@@ -192,8 +192,8 @@ class BaseScraper(ABC):
 
     def _filter(self, tenders: list[Tender]) -> list[Tender]:
         now = datetime.now()
-        # Demoliční zakázky jsou zadávány měsíce i rok dopředu – bereme posledních 180 dní
-        cutoff = now - timedelta(days=180)
+        # Pouze zakázky zveřejněné v posledních 14 dnech
+        cutoff = now - timedelta(days=14)
         result: list[Tender] = []
         for tender in tenders:
             # 1. Odmítnout slovenské a polské zakázky
@@ -201,32 +201,24 @@ class BaseScraper(ABC):
                 logger.debug("SKIP foreign: %s", tender.title)
                 continue
             # 2. Musí odpovídat alespoň jedno klíčové slovo
-            # Pokud jsou matched_keywords už přednastaveny scrapérem (např. z vyhledávání),
-            # použijeme je rovnou – nemusíme znovu hledat v textu
             if tender.matched_keywords:
                 matches = tender.matched_keywords
             else:
                 matches = self._keyword_matches(tender)
             if not matches:
                 continue
-            # 3. Kontrola data – zachováme zakázku pokud:
-            #    a) datum zveřejnění je max. 60 dní staré, NEBO
-            #    b) lhůta pro podání ještě nevypršela (zakázka je stále aktivní), NEBO
-            #    c) datum vůbec neznáme (nemůžeme posoudit)
+            # 3. Datum ZVEŘEJNĚNÍ (published_at) nesmí být starší než 14 dní
+            #    Deadline (lhůta podání) se ignoruje – nezajímá nás
+            #    Pokud datum neznáme, zakázku zachováme
             published = self._parse_date(tender.published_at) if tender.published_at else None
-            deadline = self._parse_date(tender.deadline_at) if tender.deadline_at else None
-            published_ok = published is None or published >= cutoff
-            deadline_ok = deadline is not None and deadline >= now
-
-            if not published_ok and not deadline_ok:
+            if published is not None and published < cutoff:
                 logger.info(
-                    "SKIP příliš stará published=%s deadline=%s: %s",
-                    tender.published_at, tender.deadline_at, tender.title[:60],
+                    "SKIP stará published=%s: %s",
+                    tender.published_at, tender.title[:60],
                 )
                 continue
-
-            if published is None and deadline is None:
-                logger.info("POZOR bez data: %s – %s", self.source, tender.title[:60])
+            if published is None:
+                logger.info("POZOR bez data zveřejnění: %s – %s", self.source, tender.title[:60])
 
             tender.matched_keywords = matches
             result.append(tender)
