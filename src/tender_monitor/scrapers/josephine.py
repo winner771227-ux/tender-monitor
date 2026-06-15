@@ -1,13 +1,16 @@
 """Scraper pro JOSEPHINE – josephine.proebiz.com
 
-Prochází všechny zakázky od nejnovějších, ale zastaví se jakmile
-narazí na zakázku starší než 180 dní – starší zakázky nás nezajímají.
+Používá vyhledávání s řazením podle data zveřejnění (nejnovější první).
+Pro každé klíčové slovo projde prvních 5 stránek výsledků.
+Tím se vyhne procházení všech 596 stránek.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
-from urllib.parse import urljoin
+from datetime import datetime
+from urllib.parse import urljoin, quote
 
 from playwright.async_api import Page
 
@@ -23,25 +26,42 @@ _PUB_LABELS = (
     "Datum prvního uveřejnění", "Datum zahájení", "Vytvořeno",
 )
 
-# JOSEPHINE zobrazuje v tabulce datum "zveřejnění" v posledním sloupci každého řádku
-# Zjistili jsme: cells[8] = deadline, published_at je jen na detailu
-# Ale detailní stránka JOSEPHINE datum zveřejnění má pod štítkem (viz _PUB_LABELS výše)
+# Vyhledávání JOSEPHINE řazené podle data zveřejnění (nejnovější první)
+# sort=publishedAt&order=desc zajistí, že dostaneme nejnovější výsledky
+_SEARCH_URL = (
+    "https://josephine.proebiz.com/cs/public-tenders/all"
+    "?query={keyword}&sort=publishedAt&order=desc"
+)
 
 
 class JosephineScraper(BaseScraper):
     source = "JOSEPHINE"
     url = "https://josephine.proebiz.com/cs/public-tenders/all"
-    # Procházíme stránky od nejnovějších – zastavíme se automaticky
-    # jakmile nenajdeme žádné nové relevantní zakázky na 3 stránkách za sebou
-    # JOSEPHINE má ~600 stránek, demoliční zakázky jsou rozmístěné řídce
-    # Zastavíme se po 60 stránkách nebo po 25 prázdných stránkách za sebou
-    max_pages = 100
+    # Pro každé klíčové slovo projdeme max 10 stránek (200 výsledků)
+    # seřazených od nejnovějších
+    max_pages = 10
     max_tenders = 200
 
     async def scrape_page(self, page: Page) -> list[Tender]:
+        all_tenders: list[Tender] = []
+
+        for keyword in self.keywords:
+            search_url = _SEARCH_URL.format(keyword=quote(keyword))
+            logger.info("JOSEPHINE hledám: %s -> %s", keyword, search_url)
+            try:
+                await page.goto(search_url, wait_until="domcontentloaded")
+                batch = await self._scrape_keyword(page, keyword)
+                logger.info("JOSEPHINE keyword='%s' nalezeno=%s", keyword, len(batch))
+                all_tenders.extend(batch)
+            except Exception as exc:
+                logger.warning("JOSEPHINE keyword='%s' chyba: %s", keyword, exc)
+            await asyncio.sleep(1)
+
+        return self.deduplicate_tenders(all_tenders)
+
+    async def _scrape_keyword(self, page: Page, keyword: str) -> list[Tender]:
         tenders: list[Tender] = []
         visited_urls: set[str] = set()
-        empty_pages = 0   # počet stránek bez jediné relevantní zakázky
 
         for page_num in range(self.max_pages):
             if page.url in visited_urls:
@@ -55,27 +75,17 @@ class JosephineScraper(BaseScraper):
                     timeout=30_000,
                 )
             except Exception:
-                logger.warning("JOSEPHINE stránka %s: timeout čekání na tabulku", page_num + 1)
+                logger.info("JOSEPHINE keyword='%s' stránka %s: žádná tabulka", keyword, page_num + 1)
                 break
 
             rows = await page.locator(
                 "xpath=//table[.//th[contains(normalize-space(.), 'Název zakázky')]]//tr[td]"
             ).all()
             rows = [r for r in rows if len(await r.locator("td").all()) >= 7]
-            logger.info("JOSEPHINE page=%s rows=%s", page.url, len(rows))
-
-            found_on_page = 0
-            stop_crawling = False
+            logger.info("JOSEPHINE keyword='%s' stránka %s: %s řádků", keyword, page_num + 1, len(rows))
 
             for row in rows:
-                if len(tenders) >= self.max_tenders:
-                    stop_crawling = True
-                    break
-
-                cells = [
-                    self._clean(await cell.inner_text())
-                    for cell in await row.locator("td").all()
-                ]
+                cells = [self._clean(await c.inner_text()) for c in await row.locator("td").all()]
                 if len(cells) < 7:
                     continue
 
@@ -85,83 +95,24 @@ class JosephineScraper(BaseScraper):
                 if tender is None:
                     continue
 
-                # Odmítneme SK/PL zakázky okamžitě
+                # Odmítneme SK/PL zakázky
                 if _is_foreign(tender):
                     continue
 
-                # Ověříme klíčová slova (base._keyword_matches hledá v title+authority)
-                matches = self._keyword_matches(tender)
-                if not matches:
-                    continue
+                # Označíme klíčové slovo (zakázka nalezena tímto vyhledáváním)
+                if keyword not in tender.matched_keywords:
+                    tender.matched_keywords.append(keyword)
 
-                # Datum zveřejnění z detailní stránky
-                pub = await self._get_pub_date(page, tender.url)
-                if pub:
-                    tender.published_at = pub
-                # Pokud nenajdeme datum zveřejnění, necháme None
-                # -> base._filter zachová zakázku (rule c: datum neznáme)
-                tender.matched_keywords = matches
-
-                logger.info(
-                    "JOSEPHINE ✅ tender=%s published=%s",
-                    tender.title[:50], tender.published_at,
-                )
+                logger.info("JOSEPHINE [%s] ✅ tender=%s published=%s",
+                           keyword, tender.title[:45], tender.published_at)
                 tenders.append(tender)
-                found_on_page += 1
-
-            if stop_crawling:
-                break
-
-            if found_on_page == 0:
-                empty_pages += 1
-                if empty_pages >= 30:
-                    logger.info("JOSEPHINE: 30 prázdných stránek za sebou – zastavuji na stránce %s", page_num + 1)
-                    break
-            else:
-                empty_pages = 0
 
             next_url = await self._next_url(page)
             if not next_url or next_url in visited_urls:
                 break
             await page.goto(next_url, wait_until="domcontentloaded")
 
-        logger.info("JOSEPHINE total=%s", len(tenders))
-        return self.deduplicate_tenders(tenders)
-
-    async def _get_pub_date(self, page: Page, tender_url: str) -> str | None:
-        """Načte datum zveřejnění z detailní stránky zakázky."""
-        ctx = await page.context.browser.new_context()
-        detail = await ctx.new_page()
-        detail.set_default_timeout(self.timeout_ms)
-        try:
-            await detail.goto(tender_url, wait_until="domcontentloaded")
-            await detail.wait_for_selector("body", state="attached", timeout=self.timeout_ms)
-            text = await detail.locator("body").inner_text()
-
-            for label in _PUB_LABELS:
-                # Vzor: "Datum uveřejnění: 02.06.2026" na stejném řádku
-                m = re.compile(
-                    rf"{re.escape(label)}\s*:?\s*(\d{{2}}\.\d{{2}}\.\d{{4}}(?:\s+\d{{2}}:\d{{2}}:\d{{2}})?)",
-                    re.IGNORECASE,
-                ).search(text)
-                if m:
-                    return m.group(1).strip()
-
-                # Vzor: štítek na jednom řádku, datum na dalším
-                lines = text.splitlines()
-                for i, line in enumerate(lines[:-3]):
-                    if label.lower() in line.lower():
-                        for next_line in lines[i + 1:i + 4]:
-                            m2 = _DATE_RE.search(next_line)
-                            if m2:
-                                return m2.group(0).strip()
-
-            return None
-        except Exception as exc:
-            logger.warning("JOSEPHINE detail error %s: %s", tender_url, exc)
-            return None
-        finally:
-            await ctx.close()
+        return tenders
 
     async def _next_url(self, page: Page) -> str | None:
         link = page.locator("a:has-text('Další'), a:has-text('Next')").last
@@ -174,39 +125,32 @@ class JosephineScraper(BaseScraper):
 
     @classmethod
     def _build(cls, cells: list[str], href: str | None, current_url: str) -> Tender | None:
-        from datetime import datetime
+        now = datetime.now()
         external_id = cls._line(cells[0])
         title = cls._line(cells[2])
         authority = cls._line(cells[5]) if len(cells) > 5 else ""
         deadline = cls._date(cells[8]) if len(cells) > 8 else None
-        # Datum zveřejnění = datum v MINULOSTI (deadline je v budoucnosti)
-        now = datetime.now()
+        # Datum v minulosti = datum zveřejnění; datum v budoucnosti = deadline
         published = None
         for cell in cells:
             d = cls._date(cell)
             if d:
                 try:
-                    parsed = datetime.strptime(d[:10], "%d.%m.%Y")
-                    if parsed < now:
+                    if datetime.strptime(d[:10], "%d.%m.%Y") < now:
                         published = d
                         break
                 except Exception:
                     pass
         url = (
-            urljoin(current_url, href)
-            if href
-            else (
-                f"https://josephine.proebiz.com/cs/tender/{external_id}/summary"
-                if external_id.isdigit()
-                else None
-            )
+            urljoin(current_url, href) if href
+            else (f"https://josephine.proebiz.com/cs/tender/{external_id}/summary"
+                  if external_id.isdigit() else None)
         )
         if not title or not url:
             return None
         return Tender(
             source=JosephineScraper.source,
-            title=title,
-            url=url,
+            title=title, url=url,
             authority=authority or None,
             published_at=published,
             deadline_at=deadline,
