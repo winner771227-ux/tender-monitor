@@ -9,6 +9,7 @@ from tender_monitor.scrapers.profily_proebiz import ProfilyProebizScraper
 from tender_monitor.scrapers.tender_arena import TenderArenaScraper
 from tender_monitor.scrapers.tender_market import TenderMarketScraper
 from tender_monitor.scrapers.vhodne_uverejneni import VhodneUverejneniScraper
+from tender_monitor.scrapers.portal_dodavatele import PortalDodavateleScraper
 from tender_monitor.scrapers.vvz import VvzScraper
 
 SCRAPER_CLASSES = (
@@ -18,6 +19,7 @@ SCRAPER_CLASSES = (
 
     # ⚠️ ČÁSTEČNĚ – přidáváme ale mohou vracet 0
     EvezaScraper,           # eVeZa – vyhledávání funguje, výsledky se ověřují
+    PortalDodavateleScraper,  # Portál Dodavatele – nástupce Vhodného uveřejnění, zkouší se
     # VhodneUverejneniScraper,  # Vhodné uveřejnění – timeout na GitHub Actions
 
     # ❌ DEAKTIVOVÁNO – nemají centrální vyhledávání nebo timeout
@@ -42,5 +44,6 @@ __all__ = [
     "TenderArenaScraper",
     "TenderMarketScraper",
     "VhodneUverejneniScraper",
+    "PortalDodavateleScraper",
     "VvzScraper",
 ]
