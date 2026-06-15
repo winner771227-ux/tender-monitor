@@ -1,4 +1,5 @@
 """Registry of all active scraper classes."""
+from tender_monitor.scrapers.aspo import AspoScraper
 from tender_monitor.scrapers.e_zakazky import EZakazkyScraper
 from tender_monitor.scrapers.eveza import EvezaScraper
 from tender_monitor.scrapers.josephine import JosephineScraper
@@ -14,7 +15,8 @@ from tender_monitor.scrapers.vvz import VvzScraper
 
 SCRAPER_CLASSES = (
     # ✅ FUNGUJE
-    JosephineScraper,       # JOSEPHINE – centrální seznam, vyhledávání ✅
+    JosephineScraper,
+    AspoScraper,            # ASPO – XML feed + NEN profil (Ministerstvo obrany)       # JOSEPHINE – centrální seznam, vyhledávání ✅
     ProfilyProebizScraper,  # Profily PROEBIZ – centrální seznam ✅
 
     # ⚠️ ČÁSTEČNĚ – přidáváme ale mohou vracet 0
@@ -34,6 +36,7 @@ SCRAPER_CLASSES = (
 
 __all__ = [
     "SCRAPER_CLASSES",
+    "AspoScraper",
     "EZakazkyScraper",
     "EvezaScraper",
     "JosephineScraper",
