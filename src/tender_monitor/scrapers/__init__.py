@@ -19,7 +19,7 @@ SCRAPER_CLASSES = (
 
     # ⚠️ ČÁSTEČNĚ – přidáváme ale mohou vracet 0
     EvezaScraper,           # eVeZa – vyhledávání funguje, výsledky se ověřují
-    PortalDodavateleScraper,  # Portál Dodavatele – nástupce Vhodného uveřejnění, zkouší se
+    # PortalDodavateleScraper,  # Portál Dodavatele – vyžaduje přihlášení, blokuje roboty
     # VhodneUverejneniScraper,  # Vhodné uveřejnění – timeout na GitHub Actions
 
     # ❌ DEAKTIVOVÁNO – nemají centrální vyhledávání nebo timeout
