@@ -57,6 +57,7 @@ class EZakazkyScraper(BaseScraper):
                 break
 
             batch = await self.collect_table_tenders(page, table_xpath)
+            logger.info("%s page=%s batch=%s", self.source, page.url, len(batch))
             for t in batch:
                 if _is_foreign(t):
                     continue
