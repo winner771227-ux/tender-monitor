@@ -35,7 +35,7 @@ class JosephineScraper(BaseScraper):
     # jakmile nenajdeme žádné nové relevantní zakázky na 3 stránkách za sebou
     # JOSEPHINE má ~600 stránek, demoliční zakázky jsou rozmístěné řídce
     # Zastavíme se po 60 stránkách nebo po 25 prázdných stránkách za sebou
-    max_pages = 60
+    max_pages = 100
     max_tenders = 200
 
     async def scrape_page(self, page: Page) -> list[Tender]:
@@ -114,8 +114,8 @@ class JosephineScraper(BaseScraper):
 
             if found_on_page == 0:
                 empty_pages += 1
-                if empty_pages >= 25:
-                    logger.info("JOSEPHINE: 25 prázdných stránek za sebou – zastavuji na stránce %s", page_num + 1)
+                if empty_pages >= 30:
+                    logger.info("JOSEPHINE: 30 prázdných stránek za sebou – zastavuji na stránce %s", page_num + 1)
                     break
             else:
                 empty_pages = 0
@@ -174,10 +174,24 @@ class JosephineScraper(BaseScraper):
 
     @classmethod
     def _build(cls, cells: list[str], href: str | None, current_url: str) -> Tender | None:
+        from datetime import datetime
         external_id = cls._line(cells[0])
         title = cls._line(cells[2])
         authority = cls._line(cells[5]) if len(cells) > 5 else ""
         deadline = cls._date(cells[8]) if len(cells) > 8 else None
+        # Datum zveřejnění = datum v MINULOSTI (deadline je v budoucnosti)
+        now = datetime.now()
+        published = None
+        for cell in cells:
+            d = cls._date(cell)
+            if d:
+                try:
+                    parsed = datetime.strptime(d[:10], "%d.%m.%Y")
+                    if parsed < now:
+                        published = d
+                        break
+                except Exception:
+                    pass
         url = (
             urljoin(current_url, href)
             if href
@@ -194,6 +208,7 @@ class JosephineScraper(BaseScraper):
             title=title,
             url=url,
             authority=authority or None,
+            published_at=published,
             deadline_at=deadline,
             external_id=external_id or None,
         )

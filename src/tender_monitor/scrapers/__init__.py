@@ -12,7 +12,7 @@ from tender_monitor.scrapers.vvz import VvzScraper
 # All scrapers listed here will be run every day.
 SCRAPER_CLASSES = (
     JosephineScraper,
-    NenScraper,
+    # NenScraper,  # Dočasně vypnuto – nen.nipez.cz timeout na GitHub Actions
     VvzScraper,
     TenderMarketScraper,
     TenderArenaScraper,
