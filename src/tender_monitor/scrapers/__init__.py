@@ -8,6 +8,7 @@ from tender_monitor.scrapers.profil_zadavatele_vz import ProfilZadavateleVzScrap
 from tender_monitor.scrapers.profily_proebiz import ProfilyProebizScraper
 from tender_monitor.scrapers.tender_arena import TenderArenaScraper
 from tender_monitor.scrapers.tender_market import TenderMarketScraper
+from tender_monitor.scrapers.vhodne_uverejneni import VhodneUverejneniScraper
 from tender_monitor.scrapers.vvz import VvzScraper
 
 SCRAPER_CLASSES = (
@@ -17,6 +18,7 @@ SCRAPER_CLASSES = (
 
     # ⚠️ ČÁSTEČNĚ – přidáváme ale mohou vracet 0
     EvezaScraper,           # eVeZa – vyhledávání funguje, výsledky se ověřují
+    VhodneUverejneniScraper,  # Vhodné uveřejnění – agregátor všech CZ profilů
 
     # ❌ DEAKTIVOVÁNO – nemají centrální vyhledávání nebo timeout
     # TenderArenaScraper,   # Tender Arena – pouze profily zadavatelů, ne centrální vyhledávání
@@ -39,5 +41,6 @@ __all__ = [
     "ProfilyProebizScraper",
     "TenderArenaScraper",
     "TenderMarketScraper",
+    "VhodneUverejneniScraper",
     "VvzScraper",
 ]
