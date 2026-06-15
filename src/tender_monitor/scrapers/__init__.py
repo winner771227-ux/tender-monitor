@@ -11,16 +11,21 @@ from tender_monitor.scrapers.tender_market import TenderMarketScraper
 from tender_monitor.scrapers.vvz import VvzScraper
 
 SCRAPER_CLASSES = (
-    JosephineScraper,       # JOSEPHINE – funguje ✅
-    ProfilyProebizScraper,  # Profily PROEBIZ – funguje ✅
-    PodoFenScraper,         # Portál Dodavatele FEN – agregátor všech CZ portálů ✅ (nový)
-    TenderArenaScraper,     # Tender Arena – opraveno
-    EZakazkyScraper,        # E-ZAKAZKY – opraveno
-    TenderMarketScraper,    # Tender Market – opraveno
-    ProfilZadavateleVzScraper,  # Profil zadavatele VZ – opraveno
-    EvezaScraper,           # eVeZa – omezeno na 1 stránku (JS stránkování)
-    # NenScraper,           # NEN – dočasně vypnuto (timeout)
-    # VvzScraper,           # VVZ – nadlimitní zakázky, uživatel nezajímá
+    # ✅ FUNGUJE
+    JosephineScraper,       # JOSEPHINE – centrální seznam, vyhledávání ✅
+    ProfilyProebizScraper,  # Profily PROEBIZ – centrální seznam ✅
+
+    # ⚠️ ČÁSTEČNĚ – přidáváme ale mohou vracet 0
+    EvezaScraper,           # eVeZa – vyhledávání funguje, výsledky se ověřují
+
+    # ❌ DEAKTIVOVÁNO – nemají centrální vyhledávání nebo timeout
+    # TenderArenaScraper,   # Tender Arena – pouze profily zadavatelů, ne centrální vyhledávání
+    # EZakazkyScraper,      # E-ZAKAZKY – pouze profily zadavatelů, ne centrální vyhledávání
+    # TenderMarketScraper,  # Tender Market – načte se prázdné
+    # ProfilZadavateleVzScraper,  # Profil VZ – prázdná odpověď
+    # PodoFenScraper,       # FEN – timeout
+    # NenScraper,           # NEN – timeout
+    # VvzScraper,           # VVZ – React SPA, nadlimitní zakázky
 )
 
 __all__ = [
