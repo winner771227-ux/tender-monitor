@@ -26,7 +26,7 @@ SCRAPER_CLASSES = (
     # TenderMarketScraper,  # Tender Market – načte se prázdné
     # ProfilZadavateleVzScraper,  # Profil VZ – prázdná odpověď
     # PodoFenScraper,       # FEN – timeout
-    # NenScraper,           # NEN – timeout
+    NenScraper,             # NEN – opraveno, delší timeout
     # VvzScraper,           # VVZ – React SPA, nadlimitní zakázky
 )
 
