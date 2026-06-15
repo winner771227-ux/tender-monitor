@@ -1,19 +1,21 @@
 """Scraper pro JOSEPHINE – josephine.proebiz.com
 
-Hledá zakázky zveřejněné v posledních 14 dnech s klíčovými slovy v NÁZVU.
-Používá filtr dateFrom a kontroluje že klíčové slovo je přímo v názvu zakázky.
+Prochází všechny zakázky od nejnovějších a filtruje podle:
+1. Klíčové slovo v NÁZVU zakázky
+2. Datum zveřejnění max. 30 dní staré
+3. Pouze české zakázky (ne SK/PL)
+
+Zastaví se jakmile narazí na stránku kde jsou VŠECHNY zakázky starší než 30 dní.
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 import re
 from datetime import datetime, timedelta
-from urllib.parse import urljoin, quote
+from urllib.parse import urljoin
 
 from playwright.async_api import Page
 
-from tender_monitor.dedupe import normalize_text
 from tender_monitor.models import Tender
 from tender_monitor.scrapers.base import BaseScraper, _is_foreign
 
@@ -21,41 +23,18 @@ logger = logging.getLogger(__name__)
 
 _DATE_RE = re.compile(r"\b(\d{2})\.(\d{2})\.(\d{4})(?:\s+\d{2}:\d{2}(?::\d{2})?)?\b")
 
-_SEARCH_URL = (
-    "https://josephine.proebiz.com/cs/public-tenders/all"
-    "?query={keyword}&dateFrom={date_from}"
-)
-
 
 class JosephineScraper(BaseScraper):
     source = "JOSEPHINE"
     url = "https://josephine.proebiz.com/cs/public-tenders/all"
-    max_pages = 5
+    max_pages = 60   # Pojistka – v praxi se zastaví dříve
     max_tenders = 200
 
     async def scrape_page(self, page: Page) -> list[Tender]:
-        all_tenders: list[Tender] = []
-        # Pouze zakázky zveřejněné v posledních 14 dnech
-        date_from = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
-
-        for keyword in self.keywords:
-            search_url = _SEARCH_URL.format(keyword=quote(keyword), date_from=date_from)
-            logger.info("JOSEPHINE hledám: '%s' od %s", keyword, date_from)
-            try:
-                await page.goto(search_url, wait_until="domcontentloaded")
-                batch = await self._scrape_keyword(page, keyword, date_from)
-                logger.info("JOSEPHINE keyword='%s' nalezeno=%s", keyword, len(batch))
-                all_tenders.extend(batch)
-            except Exception as exc:
-                logger.warning("JOSEPHINE keyword='%s' chyba: %s", keyword, exc)
-            await asyncio.sleep(1)
-
-        return self.deduplicate_tenders(all_tenders)
-
-    async def _scrape_keyword(self, page: Page, keyword: str, date_from: str) -> list[Tender]:
         tenders: list[Tender] = []
         visited_urls: set[str] = set()
-        cutoff = datetime.strptime(date_from, "%Y-%m-%d")
+        now = datetime.now()
+        cutoff = now - timedelta(days=30)  # hledáme zakázky max 30 dní staré
 
         for page_num in range(self.max_pages):
             if page.url in visited_urls:
@@ -68,60 +47,81 @@ class JosephineScraper(BaseScraper):
                     state="attached", timeout=30_000,
                 )
             except Exception:
-                logger.info("JOSEPHINE '%s' str. %s: žádná tabulka", keyword, page_num + 1)
+                logger.warning("JOSEPHINE str. %s: timeout", page_num + 1)
                 break
 
             rows = await page.locator(
                 "xpath=//table[.//th[contains(normalize-space(.), 'Název zakázky')]]//tr[td]"
             ).all()
             rows = [r for r in rows if len(await r.locator("td").all()) >= 7]
-            logger.info("JOSEPHINE '%s' str. %s: %s řádků", keyword, page_num + 1, len(rows))
+            logger.info("JOSEPHINE page=%s rows=%s", page.url, len(rows))
 
             if not rows:
                 break
 
+            page_newest_date = None  # nejnovější datum na této stránce
+
             for row in rows:
+                if len(tenders) >= self.max_tenders:
+                    break
+
                 cells = [self._clean(await c.inner_text()) for c in await row.locator("td").all()]
                 if len(cells) < 7:
                     continue
 
                 link = row.locator("a[href*='/tender/'][href*='/summary']").first
                 href = await link.get_attribute("href") if await link.count() else None
-                tender = self._build(cells, href, page.url)
+                tender = self._build(cells, href, page.url, now)
                 if tender is None:
                     continue
 
-                # 1. Odmítneme SK/PL zakázky
-                if _is_foreign(tender):
-                    logger.debug("JOSEPHINE SKIP SK/PL: %s", tender.title[:60])
-                    continue
-
-                # 2. Klíčové slovo MUSÍ být přímo v názvu zakázky
-                if normalize_text(keyword) not in normalize_text(tender.title):
-                    logger.debug("JOSEPHINE SKIP (kw ne v názvu) [%s]: %s", keyword, tender.title[:60])
-                    continue
-
-                # 3. Datum zveřejnění musí být v posledních 14 dnech
-                pub = tender.published_at
-                if pub:
+                # Sledujeme nejnovější datum na stránce pro rozhodnutí o zastavení
+                if tender.published_at:
                     try:
-                        pub_date = datetime.strptime(pub[:10], "%d.%m.%Y")
-                        if pub_date < cutoff:
-                            logger.debug("JOSEPHINE SKIP stará (%s): %s", pub[:10], tender.title[:60])
+                        d = datetime.strptime(tender.published_at[:10], "%d.%m.%Y")
+                        if page_newest_date is None or d > page_newest_date:
+                            page_newest_date = d
+                    except Exception:
+                        pass
+
+                # Odmítneme SK/PL zakázky
+                if _is_foreign(tender):
+                    continue
+
+                # Ověříme klíčová slova v názvu
+                matches = self._keyword_matches(tender)
+                if not matches:
+                    continue
+
+                # Kontrola data zveřejnění
+                if tender.published_at:
+                    try:
+                        pub = datetime.strptime(tender.published_at[:10], "%d.%m.%Y")
+                        if pub < cutoff:
                             continue
                     except Exception:
                         pass
 
-                tender.matched_keywords = [keyword]
-                logger.info("JOSEPHINE ✅ [%s] '%s' published=%s", keyword, tender.title[:50], tender.published_at)
+                tender.matched_keywords = matches
+                logger.info("JOSEPHINE ✅ '%s' published=%s", tender.title[:50], tender.published_at)
                 tenders.append(tender)
+
+            if len(tenders) >= self.max_tenders:
+                break
+
+            # Zastavíme se pokud jsou VŠECHNY zakázky na stránce starší než cutoff
+            if page_newest_date is not None and page_newest_date < cutoff:
+                logger.info("JOSEPHINE: zakázky příliš staré (nejnovější %s) – zastavuji str. %s",
+                           page_newest_date.date(), page_num + 1)
+                break
 
             next_url = await self._next_url(page)
             if not next_url or next_url in visited_urls:
                 break
             await page.goto(next_url, wait_until="domcontentloaded")
 
-        return tenders
+        logger.info("JOSEPHINE total=%s", len(tenders))
+        return self.deduplicate_tenders(tenders)
 
     async def _next_url(self, page: Page) -> str | None:
         link = page.locator("a:has-text('Další'), a:has-text('Next')").last
@@ -133,21 +133,20 @@ class JosephineScraper(BaseScraper):
         return urljoin(page.url, href)
 
     @classmethod
-    def _build(cls, cells: list[str], href: str | None, current_url: str) -> Tender | None:
-        now = datetime.now()
+    def _build(cls, cells: list[str], href: str | None, current_url: str,
+               now: datetime) -> Tender | None:
         external_id = cls._line(cells[0])
         title = cls._line(cells[2])
         authority = cls._line(cells[5]) if len(cells) > 5 else ""
         deadline = cls._date(cells[8]) if len(cells) > 8 else None
 
-        # Datum v MINULOSTI = datum zveřejnění (NIKOLI deadline)
+        # Datum v minulosti = datum zveřejnění
         published = None
         for cell in cells:
             d = cls._date(cell)
             if d:
                 try:
-                    parsed = datetime.strptime(d[:10], "%d.%m.%Y")
-                    if parsed <= now:
+                    if datetime.strptime(d[:10], "%d.%m.%Y") <= now:
                         published = d
                         break
                 except Exception:
