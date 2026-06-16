@@ -3,13 +3,13 @@ name: Tender monitor
 on:
   workflow_dispatch:
   schedule:
-    # GitHub Actions běží v UTC. Praha = UTC+1 (zima) nebo UTC+2 (léto).
-    # Spouštíme v 6:00 i 7:00 UTC a níže kontrolujeme, zda je v Praze 8:00.
-    - cron: "0 6,7 * * *"
+    # Spouštíme v 6:00 UTC = 8:00 Praha (CEST, léto UTC+2)
+    # GitHub Actions se může zpozdit 5-15 minut, ale to nevadí
+    - cron: "0 6 * * *"
 
 jobs:
   monitor:
-    runs-on: ubuntu-22.04        # pevná verze – stabilnější než ubuntu-latest
+    runs-on: ubuntu-22.04
     timeout-minutes: 60
     env:
       PYTHONPATH: src
@@ -24,82 +24,34 @@ jobs:
       SMTP_USE_TLS:  ${{ secrets.SMTP_USE_TLS || 'true' }}
 
     steps:
-      # ------------------------------------------------------------------ #
-      # 1. Kontrola času – spustíme jen pokud je v Praze 8:00               #
-      # ------------------------------------------------------------------ #
-      - name: Kontrola pražského času
-        id: gate
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-        run: |
-          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
-            echo "should_run=true" >> "$GITHUB_OUTPUT"
-            echo "Ruční spuštění – pokračuji."
-          elif [ "$(TZ=Europe/Prague date +%H)" = "08" ]; then
-            echo "should_run=true" >> "$GITHUB_OUTPUT"
-            echo "Je 8:00 Praha – pokračuji."
-          else
-            echo "should_run=false" >> "$GITHUB_OUTPUT"
-            echo "Není 8:00 Praha – přeskakuji."
-          fi
-
-      # ------------------------------------------------------------------ #
-      # 2. Stažení kódu                                                     #
-      # ------------------------------------------------------------------ #
       - name: Checkout
-        if: steps.gate.outputs.should_run == 'true'
         uses: actions/checkout@v4
 
-      # ------------------------------------------------------------------ #
-      # 3. Python                                                            #
-      # ------------------------------------------------------------------ #
       - name: Nastavení Python 3.12
-        if: steps.gate.outputs.should_run == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
 
-      # ------------------------------------------------------------------ #
-      # 4. Python balíčky                                                   #
-      # ------------------------------------------------------------------ #
       - name: Instalace Python závislostí
-        if: steps.gate.outputs.should_run == 'true'
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # ------------------------------------------------------------------ #
-      # 5. Chromium – instalujeme POUZE prohlížeč, bez systémových balíčků #
-      #    a pak ručně doinstalujeme jen nezbytné knihovny.                 #
-      #    Tímto obcházíme chybné Microsoft repozitáře na ubuntu-latest.    #
-      # ------------------------------------------------------------------ #
       - name: Instalace Chromium (Playwright)
-        if: steps.gate.outputs.should_run == 'true'
         run: |
-          # Nainstaluj pouze prohlížeč bez --with-deps (vyhne se broken repům)
           python -m playwright install chromium
-
-          # Doinstaluj systémové knihovny, které Chromium potřebuje,
-          # přímo přes apt – bez problematických externích repozitářů
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
             libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 \
             libcups2 libdrm2 libxkbcommon0 libxcomposite1 \
             libxdamage1 libxfixes3 libxrandr2 libgbm1 libasound2
 
-      # ------------------------------------------------------------------ #
-      # 6. Spuštění monitoringu                                             #
-      # ------------------------------------------------------------------ #
       - name: Spuštění monitoringu
-        if: steps.gate.outputs.should_run == 'true'
         run: python -m tender_monitor run
 
-      # ------------------------------------------------------------------ #
-      # 7. Uložení reportů jako artefakt (vždy, i při chybě)               #
-      # ------------------------------------------------------------------ #
       - name: Uložení reportů
-        if: always() && steps.gate.outputs.should_run == 'true'
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: tender-reports-${{ github.run_number }}
