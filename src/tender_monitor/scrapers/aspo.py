@@ -41,9 +41,29 @@ class AspoScraper(BaseScraper):
             logger.info("ASPO XML: scraped=%s after_filter=%s", len(tenders), len(filtered))
             return ScrapeResult(source=self.source, tenders=filtered)
 
-        # 2. Záloha: Playwright scraping NEN profilu
-        logger.info("ASPO XML nedostupný, zkouším Playwright")
-        return await super().scrape(browser)
+        # 2. Záloha: Playwright scraping NEN profilu (s kratším timeoutem,
+        #    aby výpadek NEN nezdržel celý běh)
+        logger.info("ASPO XML nedostupný, zkouším Playwright (krátký timeout)")
+        context = await browser.new_context(
+            user_agent=(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+            ),
+            locale="cs-CZ",
+        )
+        page = await context.new_page()
+        try:
+            await page.goto(self.url, wait_until="domcontentloaded", timeout=45_000)
+            raw = await self.scrape_page(page)
+            filtered = self._filter(raw)
+            logger.info("ASPO Playwright: scraped=%s after_filter=%s", len(raw), len(filtered))
+            return ScrapeResult(source=self.source, tenders=filtered)
+        except Exception as exc:
+            logger.warning("ASPO: NEN profil nedostupný (%s) – přeskakuji bez chyby", exc)
+            # Vracíme prázdný výsledek BEZ chyby – NEN výpadek nemá shazovat celý běh
+            return ScrapeResult(source=self.source, tenders=[], error=None)
+        finally:
+            await context.close()
 
     def _scrape_xml(self) -> list[Tender] | None:
         """Stáhne a parsuje XML feed zakázek ASPO."""
