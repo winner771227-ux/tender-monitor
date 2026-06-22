@@ -59,7 +59,10 @@ class NenScraper(BaseScraper):
                         "NEN '%s': tables=%s text_len=%s", keyword, tables, text_len
                     )
 
-                    batch = await self.collect_table_tenders(page, "//table[.//th]")
+                    # NEN pouziva React - tabulka nemusi mit <th>, zkusime oba varianty
+                    batch = await self.collect_table_tenders(page, "//table[.//td]")
+                    if not batch:
+                        batch = await self.collect_table_tenders(page, "//table")
                     for t in batch:
                         if _is_foreign(t):
                             continue

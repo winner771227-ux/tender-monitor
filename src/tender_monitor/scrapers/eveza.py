@@ -88,11 +88,11 @@ class EvezaScraper(BaseScraper):
                             wait_until="domcontentloaded", timeout=45_000
                         )
                     else:
-                        # Odeslame formular - POUZE tlacitko "Vyhledat", ne "Prihlasit se"
+                        # Odeslame formular - hledame tlacitko Vyhledat
                         submit = page.locator(
                             "input[value='Vyhledat'], "
                             "button:has-text('Vyhledat'), "
-                            "input[type='submit'][value!='Přihlásit se'][value!='Prihlasit se']"
+                            "input[value='Search']"
                         ).first
                         if await submit.count():
                             await submit.click()
