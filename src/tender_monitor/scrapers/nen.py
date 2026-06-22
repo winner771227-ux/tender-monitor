@@ -1,4 +1,13 @@
-"""Scraper pro NEN - nen.nipez.cz - TRACE verze"""
+"""Scraper pro NEN - nen.nipez.cz
+
+NEN je React SPA - nacita obsah JavaScriptem.
+Prepisujeme scrape() abychom se nezasekli na uvodnim goto()
+pokud je portal prave nedostupny - kazde klicove slovo ma vlastni pokus.
+
+NEN radi vysledky od nejnovejsich. Bereme max MAX_ROWS_PER_KEYWORD radku
+na klicove slovo - starsi zakazky nas nezajimaji a datum zverejneni
+v seznamu neni k dispozici.
+"""
 from __future__ import annotations
 
 import asyncio
@@ -17,11 +26,14 @@ _SEARCH_URL = (
     "/p:vz:query={keyword}"
 )
 
+# NEN radi od nejnovejsich - bereme jen prvnich N radku na klicove slovo
+MAX_ROWS_PER_KEYWORD = 20
+
 
 class NenScraper(BaseScraper):
     source = "NEN"
     url = "https://nen.nipez.cz/verejne-zakazky"
-    max_pages = 3
+    max_pages = 1
     per_keyword_timeout_ms = 45_000
 
     async def scrape(self, browser: Browser) -> ScrapeResult:
@@ -38,7 +50,6 @@ class NenScraper(BaseScraper):
 
         try:
             for keyword in self.keywords:
-                # Pouze první klíčové slovo pro trace - pak normálně
                 search_url = _SEARCH_URL.format(keyword=quote(keyword))
                 logger.info("NEN hledam: '%s'", keyword)
                 try:
@@ -48,30 +59,28 @@ class NenScraper(BaseScraper):
                     )
                     await page.wait_for_timeout(6_000)
 
+                    tables = await page.locator("table").count()
+                    text_len = len(await page.locator("body").inner_text())
+                    logger.info("NEN '%s': tables=%s text_len=%s", keyword, tables, text_len)
+
                     rows_all = await page.locator("table tr").all()
                     logger.info("NEN '%s': radky=%s", keyword, len(rows_all))
 
                     found_kw = 0
-                    skip_short = 0
-                    skip_title = 0
-                    skip_foreign = 0
+                    for row in rows_all:
+                        # Dosáhli jsme limitu pro toto klíčové slovo
+                        if found_kw >= MAX_ROWS_PER_KEYWORD:
+                            break
 
-                    for i, row in enumerate(rows_all):
                         cells = [
                             (await c.inner_text()).strip()
                             for c in await row.locator("td").all()
                         ]
+                        # NEN má 7 buněk: Detail | Číslo | Název | Stav | Zadavatel | Lhůta | Detail
                         if len(cells) < 4:
-                            skip_short += 1
                             continue
 
-                        # TRACE: první 2 řádky s >= 4 buňkami
-                        if i < 5:
-                            logger.info(
-                                "NEN TRACE row[%s]: len=%s cells=%s",
-                                i, len(cells), [c[:35] for c in cells]
-                            )
-
+                        # Název je v cells[2]
                         title = cells[2] if len(cells) > 2 and len(cells[2]) > 5 else ""
                         if not title or cells[2].startswith("N006"):
                             for idx in [3, 4, 1]:
@@ -81,11 +90,10 @@ class NenScraper(BaseScraper):
                                         break
 
                         if not title:
-                            skip_title += 1
-                            if i < 10:
-                                logger.info("NEN TRACE no title: cells=%s", [c[:25] for c in cells])
                             continue
 
+                        # URL stavíme z čísla zakázky - spolehlivější než parsování href
+                        # N006/26/V00011506 -> N006-26-V00011506
                         external_id = cells[1] if len(cells) > 1 else ""
                         if external_id and "/" in external_id:
                             id_slug = external_id.replace("/", "-")
@@ -93,11 +101,9 @@ class NenScraper(BaseScraper):
                         else:
                             any_link = row.locator("a[href]").first
                             if not await any_link.count():
-                                skip_title += 1
                                 continue
                             href = await any_link.get_attribute("href")
                             if not href:
-                                skip_title += 1
                                 continue
                             row_url = f"https://nen.nipez.cz{href}" if href.startswith("/") else href
 
@@ -106,20 +112,12 @@ class NenScraper(BaseScraper):
                             title=title,
                             url=row_url,
                             authority=cells[4] if len(cells) > 4 else None,
-                            published_at=None,
+                            published_at=None,  # NEN seznam datum zveřejnění neobsahuje
                             deadline_at=cells[5] if len(cells) > 5 else None,
                             external_id=external_id or None,
                         )
 
-                        foreign = _is_foreign(t)
-                        if i < 5:
-                            logger.info(
-                                "NEN TRACE row[%s]: title=%r url=%r foreign=%s",
-                                i, title[:40], row_url[:60], foreign
-                            )
-
-                        if foreign:
-                            skip_foreign += 1
+                        if _is_foreign(t):
                             continue
 
                         t.matched_keywords = [keyword]
@@ -127,10 +125,7 @@ class NenScraper(BaseScraper):
                         all_tenders.append(t)
                         found_kw += 1
 
-                    logger.info(
-                        "NEN '%s': found=%s skip_short=%s skip_title=%s skip_foreign=%s",
-                        keyword, found_kw, skip_short, skip_title, skip_foreign
-                    )
+                    logger.info("NEN '%s': found=%s", keyword, found_kw)
 
                 except Exception as exc:
                     logger.warning("NEN keyword='%s' chyba: %s", keyword, exc)
