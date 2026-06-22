@@ -27,7 +27,7 @@ _SEARCH_URL = (
 )
 
 # NEN radi od nejnovejsich - bereme jen prvnich N radku na klicove slovo
-MAX_ROWS_PER_KEYWORD = 5
+MAX_ROWS_PER_KEYWORD = 3
 
 
 class NenScraper(BaseScraper):
