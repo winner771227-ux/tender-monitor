@@ -64,7 +64,7 @@ class NenScraper(BaseScraper):
                     # Parsujeme radky primo
                     rows_all = await page.locator("table tr").all()
                     logger.info("NEN '%s': radky=%s", keyword, len(rows_all))
-                    for row in rows_all[1:]:  # preskocime hlavickovy radek
+                    for row in rows_all:  # NEN ma zahlavi v <thead>, ne v <tr>
                         cells = [
                             (await c.inner_text()).strip()
                             for c in await row.locator("td").all()

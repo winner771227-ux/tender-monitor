@@ -1,15 +1,12 @@
-"""Scraper pro eVeZa – eveza.cz
+"""Scraper pro eVeZa - eveza.cz
 
-eVeZa ma HTML formular pro vyhledavani zakazek.
-Playwright vyplni formular a odeslat ho pro kazde klicove slovo.
+eVeZa zobrazuje nove uverejnene zakazky na homepage bez prihlaseni.
+Vyhledavani vyzaduje prihlaseni - proto cteme cely seznam a filtrujeme lokalne.
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 import re
-from datetime import datetime, timedelta
-from urllib.parse import urljoin
 
 from playwright.async_api import Browser, Page
 
@@ -21,7 +18,6 @@ logger = logging.getLogger(__name__)
 _DATE_RE = re.compile(r"\b(\d{2})\.(\d{2})\.(\d{4})(?:\s+\d{2}:\d{2}(?::\d{2})?)?\b")
 
 _BASE_URL = "https://eveza.cz/"
-_SEARCH_URL = "https://eveza.cz/?NazevVZ={keyword}"
 
 
 class EvezaScraper(BaseScraper):
@@ -40,90 +36,81 @@ class EvezaScraper(BaseScraper):
         all_tenders: list[Tender] = []
 
         try:
-            for keyword in self.keywords:
-                logger.info("eVeZa hledam: '%s'", keyword)
-                try:
-                    # Zkusime primo URL s GET parametrem
-                    from urllib.parse import quote
-                    direct_url = f"https://eveza.cz/?NazevVZ={quote(keyword)}"
-                    await page.goto(direct_url, wait_until="domcontentloaded", timeout=45_000)
-                    await page.wait_for_timeout(2_000)
-                    
-                    # Zkontrolujeme zda jsme na login strance nebo na vysledcich
-                    current_url = page.url
-                    has_login = await page.locator(".LoginButton, #LoginView1, input[value='Přihlásit se']").count()
-                    if has_login:
-                        logger.warning("eVeZa: presmeroval na login, zkousim formular")
-                        await page.goto(_BASE_URL, wait_until="domcontentloaded", timeout=45_000)
-                        await page.wait_for_timeout(2_000)
+            await page.goto(_BASE_URL, wait_until="domcontentloaded", timeout=45_000)
+            await page.wait_for_timeout(3_000)
 
-                    # Najdi pole "Nazev verejne zakazky" a vyplnime ho
-                    # eVeZa ma input s name nebo id obsahujici "nazev" nebo "zakazky"
-                    filled = False
-                    for selector in [
-                        "input[name*='nazev']",
-                        "input[name*='zakazk']",
-                        "input[name*='Nazev']",
-                        "input[id*='nazev']",
-                        "input[id*='zakazk']",
-                        "input[placeholder*='azev']",
-                        "input[type='text']:nth-of-type(3)",  # treti textove pole
-                    ]:
-                        try:
-                            el = page.locator(selector).first
-                            if await el.count() and await el.is_visible():
-                                await el.fill(keyword)
-                                filled = True
-                                logger.info("eVeZa vyplneno pole '%s' hodnotou '%s'",
-                                           selector, keyword)
-                                break
-                        except Exception:
-                            continue
+            tables = await page.locator("table").count()
+            text_len = len(await page.locator("body").inner_text())
+            logger.info("eVeZa homepage: tables=%s text_len=%s url=%s",
+                       tables, text_len, page.url)
 
-                    if not filled:
-                        # Pokud formulár nenajdeme, zkusíme URL s parametrem
-                        logger.warning("eVeZa: formular nenalezen, zkousim URL")
-                        await page.goto(
-                            f"{_BASE_URL}?nazev_zakazky={keyword}",
-                            wait_until="domcontentloaded", timeout=45_000
-                        )
-                    else:
-                        # Odeslame formular - hledame tlacitko Vyhledat
-                        submit = page.locator(
-                            "input[value='Vyhledat'], "
-                            "button:has-text('Vyhledat'), "
-                            "input[value='Search']"
-                        ).first
-                        if await submit.count():
-                            await submit.click()
-                            await page.wait_for_load_state("domcontentloaded")
-                        else:
-                            await page.keyboard.press("Enter")
-                            await page.wait_for_load_state("domcontentloaded")
+            # Cteme vsechny radky tabulky zakazek
+            rows = await page.locator("table tr").all()
+            logger.info("eVeZa: celkem radku=%s", len(rows))
 
-                    await page.wait_for_timeout(2_000)
+            for row in rows:
+                cells = [
+                    (await c.inner_text()).strip()
+                    for c in await row.locator("td").all()
+                ]
+                if len(cells) < 2:
+                    continue
 
-                    # Parsujeme vysledky
-                    tables = await page.locator("table").count()
-                    text_len = len(await page.locator("body").inner_text())
-                    logger.info("eVeZa '%s': tables=%s text_len=%s url=%s",
-                               keyword, tables, text_len, page.url[:80])
+                # Najdeme odkaz na zakazku
+                link = row.locator("a[href]").first
+                href = await link.get_attribute("href") if await link.count() else None
+                if not href:
+                    continue
 
-                    batch = await self.collect_table_tenders(page, "//table[.//th or .//td]")
-                    for t in batch:
-                        if _is_foreign(t):
-                            continue
-                        if normalize_text(keyword) not in normalize_text(t.title):
-                            continue
-                        t.matched_keywords = [keyword]
-                        logger.info("eVeZa [%s] nalezena: '%s'", keyword, t.title[:50])
-                        all_tenders.append(t)
+                url = f"https://eveza.cz{href}" if href.startswith("/") else href
+                title = (await link.inner_text()).strip()
+                if not title or len(title) < 3:
+                    # zkusime vsechny bunky
+                    for cell in cells:
+                        if len(cell) > 10 and not cell[0].isdigit():
+                            title = cell
+                            break
 
-                except Exception as exc:
-                    logger.warning("eVeZa keyword='%s' chyba: %s", keyword, exc)
+                if not title:
+                    continue
 
-                await asyncio.sleep(1)
+                # Datum a stav z bunek
+                published = None
+                deadline = None
+                authority = None
+                for cell in cells:
+                    d = _DATE_RE.search(cell)
+                    if d and not published:
+                        published = d.group(0)
+                    elif d and not deadline:
+                        deadline = d.group(0)
+                    elif len(cell) > 5 and not any(c.isdigit() for c in cell[:5]):
+                        if cell != title:
+                            authority = cell
 
+                t = Tender(
+                    source=self.source,
+                    title=title,
+                    url=url,
+                    authority=authority,
+                    published_at=published,
+                    deadline_at=deadline,
+                )
+
+                if _is_foreign(t):
+                    continue
+
+                # Zkontrolujeme klicova slova
+                matches = self._keyword_matches(t)
+                if not matches:
+                    continue
+
+                t.matched_keywords = matches
+                logger.info("eVeZa nalezena: '%s'", t.title[:60])
+                all_tenders.append(t)
+
+        except Exception as exc:
+            logger.warning("eVeZa chyba: %s", exc)
         finally:
             await context.close()
 
