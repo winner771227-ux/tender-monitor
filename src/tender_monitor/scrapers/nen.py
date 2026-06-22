@@ -1,4 +1,4 @@
-"""Scraper pro NEN - nen.nipez.cz - DEBUG verze"""
+"""Scraper pro NEN - nen.nipez.cz"""
 from __future__ import annotations
 
 import asyncio
@@ -7,7 +7,6 @@ from urllib.parse import quote
 
 from playwright.async_api import Browser, Page
 
-from tender_monitor.dedupe import normalize_text
 from tender_monitor.models import ScrapeResult, Tender
 from tender_monitor.scrapers.base import BaseScraper, _is_foreign
 
@@ -17,6 +16,11 @@ _SEARCH_URL = (
     "https://nen.nipez.cz/verejne-zakazky"
     "/p:vz:query={keyword}"
 )
+
+# Stavy zakázky které chceme - jen aktivní/zadávané
+# "Zadán" = ukončeno, přiděleno - tyto CHCEME (zakázka existuje)
+# Vynecháme jen zjevně irelevantní stavy
+_SKIP_STATES = {"zrušen", "zrusena", "zruseno"}
 
 
 class NenScraper(BaseScraper):
@@ -39,11 +43,11 @@ class NenScraper(BaseScraper):
 
         try:
             for keyword in self.keywords:
-                url = _SEARCH_URL.format(keyword=quote(keyword))
+                search_url = _SEARCH_URL.format(keyword=quote(keyword))
                 logger.info("NEN hledam: '%s'", keyword)
                 try:
                     await page.goto(
-                        url, wait_until="domcontentloaded",
+                        search_url, wait_until="domcontentloaded",
                         timeout=self.per_keyword_timeout_ms,
                     )
                     await page.wait_for_timeout(6_000)
@@ -55,75 +59,61 @@ class NenScraper(BaseScraper):
                     rows_all = await page.locator("table tr").all()
                     logger.info("NEN '%s': radky=%s", keyword, len(rows_all))
 
-                    # DEBUG: vypíšeme strukturu prvních 3 řádků s daty
-                    debug_count = 0
+                    found_kw = 0
                     for row in rows_all:
                         cells = [
                             (await c.inner_text()).strip()
                             for c in await row.locator("td").all()
                         ]
-                        if len(cells) < 2:
-                            continue
-
-                        if debug_count < 3:
-                            # Vypíšeme všechny buňky a všechny linky
-                            all_links = await row.locator("a[href]").all()
-                            hrefs = []
-                            for a in all_links:
-                                h = await a.get_attribute("href")
-                                t = (await a.inner_text()).strip()[:30]
-                                hrefs.append(f"href={h!r} text={t!r}")
-                            logger.info(
-                                "NEN DEBUG row[%s]: cells(%s)=%s | links=%s",
-                                debug_count, len(cells),
-                                [c[:40] for c in cells],
-                                hrefs,
-                            )
-                            debug_count += 1
-
+                        # NEN má 7 buněk: Detail | Číslo | Název | Stav | Zadavatel | Lhůta | Detail
                         if len(cells) < 4:
                             continue
 
-                        # Zkusíme najít odkaz různými způsoby
-                        link = row.locator("a[href*='detail'], a:has-text('Detail')").first
-                        href = await link.get_attribute("href") if await link.count() else None
-
-                        # Fallback: první libovolný odkaz v řádku
+                        # Href - zkusíme oba Detail odkazy (cells[0] a cells[6])
+                        # Bereme první a[href] v řádku
+                        any_link = row.locator("a[href]").first
+                        href = await any_link.get_attribute("href") if await any_link.count() else None
                         if not href:
-                            any_link = row.locator("a[href]").first
-                            href = await any_link.get_attribute("href") if await any_link.count() else None
+                            continue
+                        row_url = f"https://nen.nipez.cz{href}" if href.startswith("/") else href
 
-                        row_url = f"https://nen.nipez.cz{href}" if href and href.startswith("/") else href
-
-                        title = ""
-                        for idx in [2, 3, 1, 4]:
-                            if idx < len(cells) and cells[idx] and len(cells[idx]) > 5:
-                                if not cells[idx].startswith("N006") and "ZOBRAZIT" not in cells[idx].upper():
-                                    title = cells[idx]
-                                    break
-
-                        if not title:
-                            logger.debug("NEN: no title in cells=%s", [c[:30] for c in cells])
-                        if not row_url:
-                            logger.debug("NEN: no url, href=%s", href)
+                        # Název je v cells[2]
+                        title = cells[2] if len(cells) > 2 and len(cells[2]) > 5 else ""
+                        # Fallback pokud cells[2] je prázdný nebo číslo
+                        if not title or cells[2].startswith("N006"):
+                            for idx in [3, 1, 4]:
+                                if idx < len(cells) and len(cells[idx]) > 5:
+                                    if not cells[idx].startswith("N006") and cells[idx].upper() not in ("DETAIL", "ZADÁN", "ZADANO"):
+                                        title = cells[idx]
+                                        break
 
                         if not title or not row_url:
+                            logger.debug("NEN skip: no title/url cells=%s", [c[:25] for c in cells])
                             continue
 
+                        # Datum zveřejnění NEN v seznamu nezobrazuje
+                        # cells[5] = lhůta podání - ignorujeme pro filtrování
+                        # published_at=None → _filter() zakázku zachová
                         t = Tender(
                             source="NEN",
                             title=title,
                             url=row_url,
                             authority=cells[4] if len(cells) > 4 else None,
-                            deadline_at=cells[5][:19] if len(cells) > 5 else None,
+                            published_at=None,  # NEN seznam datum zveřejnění neobsahuje
+                            deadline_at=cells[5] if len(cells) > 5 else None,
                             external_id=cells[1] if len(cells) > 1 else None,
                         )
+
                         if _is_foreign(t):
                             continue
 
+                        # Keyword byl použit pro vyhledávání = relevantní
                         t.matched_keywords = [keyword]
                         logger.info("NEN [%s] nalezena: '%s'", keyword, t.title[:60])
                         all_tenders.append(t)
+                        found_kw += 1
+
+                    logger.info("NEN '%s': found=%s", keyword, found_kw)
 
                 except Exception as exc:
                     logger.warning("NEN keyword='%s' chyba: %s", keyword, exc)
