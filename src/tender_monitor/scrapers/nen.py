@@ -17,11 +17,6 @@ _SEARCH_URL = (
     "/p:vz:query={keyword}"
 )
 
-# Stavy zakázky které chceme - jen aktivní/zadávané
-# "Zadán" = ukončeno, přiděleno - tyto CHCEME (zakázka existuje)
-# Vynecháme jen zjevně irelevantní stavy
-_SKIP_STATES = {"zrušen", "zrusena", "zruseno"}
-
 
 class NenScraper(BaseScraper):
     source = "NEN"
@@ -65,35 +60,39 @@ class NenScraper(BaseScraper):
                             (await c.inner_text()).strip()
                             for c in await row.locator("td").all()
                         ]
-                        # NEN má 7 buněk: Detail | Číslo | Název | Stav | Zadavatel | Lhůta | Detail
                         if len(cells) < 4:
                             continue
 
-                        # Href - zkusíme oba Detail odkazy (cells[0] a cells[6])
-                        # Bereme první a[href] v řádku
-                        any_link = row.locator("a[href]").first
-                        href = await any_link.get_attribute("href") if await any_link.count() else None
-                        if not href:
-                            continue
-                        row_url = f"https://nen.nipez.cz{href}" if href.startswith("/") else href
-
                         # Název je v cells[2]
                         title = cells[2] if len(cells) > 2 and len(cells[2]) > 5 else ""
-                        # Fallback pokud cells[2] je prázdný nebo číslo
                         if not title or cells[2].startswith("N006"):
-                            for idx in [3, 1, 4]:
+                            # fallback
+                            for idx in [3, 4, 1]:
                                 if idx < len(cells) and len(cells[idx]) > 5:
-                                    if not cells[idx].startswith("N006") and cells[idx].upper() not in ("DETAIL", "ZADÁN", "ZADANO"):
+                                    if not cells[idx].startswith("N006"):
                                         title = cells[idx]
                                         break
 
-                        if not title or not row_url:
-                            logger.debug("NEN skip: no title/url cells=%s", [c[:25] for c in cells])
+                        if not title:
                             continue
 
-                        # Datum zveřejnění NEN v seznamu nezobrazuje
-                        # cells[5] = lhůta podání - ignorujeme pro filtrování
-                        # published_at=None → _filter() zakázku zachová
+                        # Číslo zakázky je v cells[1], např. N006/26/V00011506
+                        # Sestavíme URL přímo z čísla zakázky - spolehlivější než parsování href
+                        external_id = cells[1] if len(cells) > 1 else ""
+                        if external_id and "/" in external_id:
+                            # N006/26/V00011506 -> N006-26-V00011506
+                            id_slug = external_id.replace("/", "-")
+                            row_url = f"https://nen.nipez.cz/verejne-zakazky/detail-zakazky/{id_slug}"
+                        else:
+                            # Fallback: zkus href z prvního odkazu
+                            any_link = row.locator("a[href]").first
+                            if not await any_link.count():
+                                continue
+                            href = await any_link.get_attribute("href")
+                            if not href:
+                                continue
+                            row_url = f"https://nen.nipez.cz{href}" if href.startswith("/") else href
+
                         t = Tender(
                             source="NEN",
                             title=title,
@@ -101,13 +100,12 @@ class NenScraper(BaseScraper):
                             authority=cells[4] if len(cells) > 4 else None,
                             published_at=None,  # NEN seznam datum zveřejnění neobsahuje
                             deadline_at=cells[5] if len(cells) > 5 else None,
-                            external_id=cells[1] if len(cells) > 1 else None,
+                            external_id=external_id or None,
                         )
 
                         if _is_foreign(t):
                             continue
 
-                        # Keyword byl použit pro vyhledávání = relevantní
                         t.matched_keywords = [keyword]
                         logger.info("NEN [%s] nalezena: '%s'", keyword, t.title[:60])
                         all_tenders.append(t)
