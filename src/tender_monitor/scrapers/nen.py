@@ -59,22 +59,50 @@ class NenScraper(BaseScraper):
                         "NEN '%s': tables=%s text_len=%s", keyword, tables, text_len
                     )
 
-                    # Debug: zobrazime prvni 3 radky tabulky
-                    rows_debug = await page.locator("table tr").all_inner_texts()
-                    logger.info("NEN '%s': radky tabulky=%s", keyword, len(rows_debug))
-                    for i, row in enumerate(rows_debug[:3]):
-                        logger.info("NEN radek %s: %s", i, row[:150])
+                    # NEN ma specialni strukturu radku:
+                    # [ZOBRAZIT DETAIL] | Cislo NEN | Nazev | Stav | Zadavatel | Lhuta
+                    # Parsujeme radky primo
+                    rows_all = await page.locator("table tr").all()
+                    logger.info("NEN '%s': radky=%s", keyword, len(rows_all))
+                    for row in rows_all[1:]:  # preskocime hlavickovy radek
+                        cells = [
+                            (await c.inner_text()).strip()
+                            for c in await row.locator("td").all()
+                        ]
+                        if len(cells) < 4:
+                            continue
+                        # Najdeme odkaz na detail
+                        link = row.locator("a[href*='detail'], a:has-text('Detail')").first
+                        href = await link.get_attribute("href") if await link.count() else None
+                        url = f"https://nen.nipez.cz{href}" if href and href.startswith("/") else href
 
-                    # NEN pouziva React - tabulka nemusi mit <th>, zkusime oba varianty
-                    batch = await self.collect_table_tenders(page, "//table[.//td]")
-                    if not batch:
-                        batch = await self.collect_table_tenders(page, "//table")
-                    for t in batch:
+                        # Nazev je typicky v 3. sloupci (index 2), cislo v 2. (index 1)
+                        # Struktura: [Detail btn] [Cislo] [Nazev] [Stav] [Zadavatel] [Lhuta]
+                        title = ""
+                        for idx in [2, 3, 1]:
+                            if idx < len(cells) and cells[idx] and len(cells[idx]) > 5:
+                                if not cells[idx].startswith("N006") and "ZOBRAZIT" not in cells[idx].upper():
+                                    title = cells[idx]
+                                    break
+
+                        if not title or not url:
+                            continue
+
+                        from tender_monitor.models import Tender as _Tender
+                        t = _Tender(
+                            source="NEN",
+                            title=title,
+                            url=url,
+                            authority=cells[4] if len(cells) > 4 else None,
+                            deadline_at=cells[5][:19] if len(cells) > 5 else None,
+                            external_id=cells[1] if len(cells) > 1 else None,
+                        )
                         if _is_foreign(t):
                             continue
                         if normalize_text(keyword) not in normalize_text(t.title):
                             continue
                         t.matched_keywords = [keyword]
+                        logger.info("NEN [%s] nalezena: '%s'", keyword, t.title[:60])
                         all_tenders.append(t)
 
                 except Exception as exc:

@@ -20,8 +20,8 @@ from tender_monitor.scrapers.base import BaseScraper, _is_foreign
 logger = logging.getLogger(__name__)
 _DATE_RE = re.compile(r"\b(\d{2})\.(\d{2})\.(\d{4})(?:\s+\d{2}:\d{2}(?::\d{2})?)?\b")
 
-_BASE_URL = "https://eveza.cz/verejne-zakazky/"
-_SEARCH_URL = "https://eveza.cz/verejne-zakazky/?NazevVZ={keyword}"
+_BASE_URL = "https://eveza.cz/"
+_SEARCH_URL = "https://eveza.cz/?NazevVZ={keyword}"
 
 
 class EvezaScraper(BaseScraper):
@@ -45,7 +45,7 @@ class EvezaScraper(BaseScraper):
                 try:
                     # Zkusime primo URL s GET parametrem
                     from urllib.parse import quote
-                    direct_url = f"https://eveza.cz/verejne-zakazky/?NazevVZ={quote(keyword)}"
+                    direct_url = f"https://eveza.cz/?NazevVZ={quote(keyword)}"
                     await page.goto(direct_url, wait_until="domcontentloaded", timeout=45_000)
                     await page.wait_for_timeout(2_000)
                     
