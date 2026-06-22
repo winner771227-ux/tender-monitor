@@ -59,6 +59,12 @@ class NenScraper(BaseScraper):
                         "NEN '%s': tables=%s text_len=%s", keyword, tables, text_len
                     )
 
+                    # Debug: zobrazime prvni 3 radky tabulky
+                    rows_debug = await page.locator("table tr").all_inner_texts()
+                    logger.info("NEN '%s': radky tabulky=%s", keyword, len(rows_debug))
+                    for i, row in enumerate(rows_debug[:3]):
+                        logger.info("NEN radek %s: %s", i, row[:150])
+
                     # NEN pouziva React - tabulka nemusi mit <th>, zkusime oba varianty
                     batch = await self.collect_table_tenders(page, "//table[.//td]")
                     if not batch:
