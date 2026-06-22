@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 _SEARCH_URL = (
     "https://nen.nipez.cz/verejne-zakazky"
-    "/p:vz:query={keyword}&p:vz:stavZP=zahajen"
+    "/p:vz:query={keyword}"
 )
 
 
