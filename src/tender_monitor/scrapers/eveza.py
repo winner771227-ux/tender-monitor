@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 _DATE_RE = re.compile(r"\b(\d{2})\.(\d{2})\.(\d{4})(?:\s+\d{2}:\d{2}(?::\d{2})?)?\b")
 
 _BASE_URL = "https://eveza.cz/verejne-zakazky/"
+_SEARCH_URL = "https://eveza.cz/verejne-zakazky/?NazevVZ={keyword}"
 
 
 class EvezaScraper(BaseScraper):
@@ -42,9 +43,19 @@ class EvezaScraper(BaseScraper):
             for keyword in self.keywords:
                 logger.info("eVeZa hledam: '%s'", keyword)
                 try:
-                    # Nacti stranku s formularem
-                    await page.goto(_BASE_URL, wait_until="domcontentloaded", timeout=45_000)
+                    # Zkusime primo URL s GET parametrem
+                    from urllib.parse import quote
+                    direct_url = f"https://eveza.cz/verejne-zakazky/?NazevVZ={quote(keyword)}"
+                    await page.goto(direct_url, wait_until="domcontentloaded", timeout=45_000)
                     await page.wait_for_timeout(2_000)
+                    
+                    # Zkontrolujeme zda jsme na login strance nebo na vysledcich
+                    current_url = page.url
+                    has_login = await page.locator(".LoginButton, #LoginView1, input[value='Přihlásit se']").count()
+                    if has_login:
+                        logger.warning("eVeZa: presmeroval na login, zkousim formular")
+                        await page.goto(_BASE_URL, wait_until="domcontentloaded", timeout=45_000)
+                        await page.wait_for_timeout(2_000)
 
                     # Najdi pole "Nazev verejne zakazky" a vyplnime ho
                     # eVeZa ma input s name nebo id obsahujici "nazev" nebo "zakazky"
@@ -77,8 +88,12 @@ class EvezaScraper(BaseScraper):
                             wait_until="domcontentloaded", timeout=45_000
                         )
                     else:
-                        # Odeslame formular
-                        submit = page.locator("input[type='submit'], button[type='submit'], button:has-text('Vyhledat')").first
+                        # Odeslame formular - POUZE tlacitko "Vyhledat", ne "Prihlasit se"
+                        submit = page.locator(
+                            "input[value='Vyhledat'], "
+                            "button:has-text('Vyhledat'), "
+                            "input[type='submit'][value!='Přihlásit se'][value!='Prihlasit se']"
+                        ).first
                         if await submit.count():
                             await submit.click()
                             await page.wait_for_load_state("domcontentloaded")
