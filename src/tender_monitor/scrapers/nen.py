@@ -59,24 +59,23 @@ class NenScraper(BaseScraper):
                         "NEN '%s': tables=%s text_len=%s", keyword, tables, text_len
                     )
 
-                    # NEN ma specialni strukturu radku:
-                    # [ZOBRAZIT DETAIL] | Cislo NEN | Nazev | Stav | Zadavatel | Lhuta
-                    # Parsujeme radky primo
                     rows_all = await page.locator("table tr").all()
                     logger.info("NEN '%s': radky=%s", keyword, len(rows_all))
-                    for row in rows_all:  # NEN ma zahlavi v <thead>, ne v <tr>
+
+                    for row in rows_all:
                         cells = [
                             (await c.inner_text()).strip()
                             for c in await row.locator("td").all()
                         ]
                         if len(cells) < 4:
                             continue
+
                         # Najdeme odkaz na detail
                         link = row.locator("a[href*='detail'], a:has-text('Detail')").first
                         href = await link.get_attribute("href") if await link.count() else None
-                        url = f"https://nen.nipez.cz{href}" if href and href.startswith("/") else href
+                        row_url = f"https://nen.nipez.cz{href}" if href and href.startswith("/") else href
 
-                        # Nazev je typicky v 3. sloupci (index 2), cislo v 2. (index 1)
+                        # Nazev je typicky v 3. sloupci (index 2)
                         # Struktura: [Detail btn] [Cislo] [Nazev] [Stav] [Zadavatel] [Lhuta]
                         title = ""
                         for idx in [2, 3, 1]:
@@ -85,22 +84,25 @@ class NenScraper(BaseScraper):
                                     title = cells[idx]
                                     break
 
-                        if not title or not url:
+                        if not title or not row_url:
                             continue
 
-                        from tender_monitor.models import Tender as _Tender
-                        t = _Tender(
+                        t = Tender(
                             source="NEN",
                             title=title,
-                            url=url,
+                            url=row_url,
                             authority=cells[4] if len(cells) > 4 else None,
+                            # NEN seznam nezobrazuje datum zverejneni - jen lhutu podani
+                            # published_at necháme None -> _filter() zakázku zachová
                             deadline_at=cells[5][:19] if len(cells) > 5 else None,
                             external_id=cells[1] if len(cells) > 1 else None,
                         )
                         if _is_foreign(t):
                             continue
-                        if normalize_text(keyword) not in normalize_text(t.title):
-                            continue
+
+                        # NEN vrací výsledky fulltext hledání - klíčové slovo může být
+                        # v popisu nebo CPV kódu, ne nutně v názvu. Stačí že NEN
+                        # zakázku vrátil při hledání tohoto klíčového slova.
                         t.matched_keywords = [keyword]
                         logger.info("NEN [%s] nalezena: '%s'", keyword, t.title[:60])
                         all_tenders.append(t)
