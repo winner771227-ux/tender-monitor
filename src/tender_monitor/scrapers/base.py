@@ -120,7 +120,7 @@ _PL_WORDS = {
 def _is_foreign(tender: Tender) -> bool:
     """Return True when the tender appears to be Slovak or Polish."""
     text = normalize_text(
-        " ".join(part or "" for part in (tender.title, tender.authority, tender.url, tender.description))
+        " ".join(part or "" for part in (tender.title, tender.authority, tender.description))
     )
     for word in _SK_WORDS | _PL_WORDS:
         if normalize_text(word) in text:
