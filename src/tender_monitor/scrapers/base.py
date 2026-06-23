@@ -227,7 +227,7 @@ class BaseScraper(ABC):
                     )
                     continue
                 if deadline is None:
-                logger.info("POZOR bez data zveřejnění: %s – %s", self.source, tender.title[:60])
+                    logger.info("POZOR bez data zveřejnění: %s – %s", self.source, tender.title[:60])
 
             tender.matched_keywords = matches
             result.append(tender)
