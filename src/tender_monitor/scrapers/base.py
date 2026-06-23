@@ -192,8 +192,9 @@ class BaseScraper(ABC):
 
     def _filter(self, tenders: list[Tender]) -> list[Tender]:
         now = datetime.now()
-        # Zakázky zveřejněné v posledních 30 dnech
-        cutoff = now - timedelta(days=30)
+        # Zakázky zveřejněné v posledních 14 dnech
+        cutoff = now - timedelta(days=14)
+        deadline_cutoff = now - timedelta(days=30)
         result: list[Tender] = []
         for tender in tenders:
             # 1. Odmítnout slovenské a polské zakázky
@@ -218,6 +219,14 @@ class BaseScraper(ABC):
                 )
                 continue
             if published is None:
+                deadline = self._parse_date(tender.deadline_at) if tender.deadline_at else None
+                if deadline is not None and deadline < deadline_cutoff:
+                    logger.info(
+                        "SKIP stará bez data, lhůta=%s: %s",
+                        tender.deadline_at, tender.title[:60],
+                    )
+                    continue
+                if deadline is None:
                 logger.info("POZOR bez data zveřejnění: %s – %s", self.source, tender.title[:60])
 
             tender.matched_keywords = matches
