@@ -192,7 +192,6 @@ class BaseScraper(ABC):
 
     def _filter(self, tenders: list[Tender]) -> list[Tender]:
         now = datetime.now()
-        # Zakázky zveřejněné v posledních 14 dnech
         cutoff = now - timedelta(days=14)
         result: list[Tender] = []
         for tender in tenders:
@@ -208,8 +207,6 @@ class BaseScraper(ABC):
             if not matches:
                 continue
             # 3. Datum ZVEŘEJNĚNÍ (published_at) nesmí být starší než 14 dní
-            #    Deadline (lhůta podání) se ignoruje – nezajímá nás
-            #    Pokud datum neznáme, zakázku zachováme
             published = self._parse_date(tender.published_at) if tender.published_at else None
             if published is not None and published < cutoff:
                 logger.info(
@@ -217,16 +214,18 @@ class BaseScraper(ABC):
                     tender.published_at, tender.title[:60],
                 )
                 continue
-           if published is None:
-               deadline = self._parse_date(tender.deadline_at) if tender.deadline_at else None
-               if deadline is not None and deadline < (now - timedelta(days=60)):
-                   logger.info(
-                       "SKIP stará bez data, lhůta=%s: %s",
-                       tender.deadline_at, tender.title[:60],
-                   )
-                   continue
-               if deadline is None:
-                   logger.info("POZOR bez data zveřejnění: %s – %s", self.source, tender.title[:60])
+            # 4. Zakázky bez published_at - filtrujeme podle lhůty podání
+            #    Pokud lhůta vypršela před více než 60 dny, zakázka je stará
+            if published is None:
+                deadline = self._parse_date(tender.deadline_at) if tender.deadline_at else None
+                if deadline is not None and deadline < (now - timedelta(days=60)):
+                    logger.info(
+                        "SKIP stará bez data, lhůta=%s: %s",
+                        tender.deadline_at, tender.title[:60],
+                    )
+                    continue
+                if deadline is None:
+                    logger.info("POZOR bez data zveřejnění: %s – %s", self.source, tender.title[:60])
 
             tender.matched_keywords = matches
             result.append(tender)
