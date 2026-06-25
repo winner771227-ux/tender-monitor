@@ -1,17 +1,10 @@
-"""Scraper pro NEN - nen.nipez.cz
-
-NEN je React SPA - nacita obsah JavaScriptem.
-Prepisujeme scrape() abychom se nezasekli na uvodnim goto()
-pokud je portal prave nedostupny - kazde klicove slovo ma vlastni pokus.
-
-NEN radi vysledky od nejnovejsich. Bereme max MAX_ROWS_PER_KEYWORD radku
-na klicove slovo - starsi zakazky nas nezajimaji a datum zverejneni
-v seznamu neni k dispozici.
-"""
+"""Scraper pro NEN - nen.nipez.cz"""
 from __future__ import annotations
 
 import asyncio
 import logging
+import re
+from datetime import datetime
 from urllib.parse import quote
 
 from playwright.async_api import Browser, Page
@@ -26,8 +19,7 @@ _SEARCH_URL = (
     "/p:vz:query={keyword}"
 )
 
-# NEN radi od nejnovejsich - bereme jen prvnich N radku na klicove slovo
-MAX_ROWS_PER_KEYWORD = 3
+MAX_ROWS_PER_KEYWORD = 5
 
 
 class NenScraper(BaseScraper):
@@ -47,6 +39,7 @@ class NenScraper(BaseScraper):
         page = await context.new_page()
         all_tenders: list[Tender] = []
         error_msg = None
+        current_year = datetime.now().year % 100  # např. 26
 
         try:
             for keyword in self.keywords:
@@ -68,7 +61,6 @@ class NenScraper(BaseScraper):
 
                     found_kw = 0
                     for row in rows_all:
-                        # Dosáhli jsme limitu pro toto klíčové slovo
                         if found_kw >= MAX_ROWS_PER_KEYWORD:
                             break
 
@@ -76,11 +68,9 @@ class NenScraper(BaseScraper):
                             (await c.inner_text()).strip()
                             for c in await row.locator("td").all()
                         ]
-                        # NEN má 7 buněk: Detail | Číslo | Název | Stav | Zadavatel | Lhůta | Detail
                         if len(cells) < 4:
                             continue
 
-                        # Název je v cells[2]
                         title = cells[2] if len(cells) > 2 and len(cells[2]) > 5 else ""
                         if not title or cells[2].startswith("N006"):
                             for idx in [3, 4, 1]:
@@ -92,8 +82,6 @@ class NenScraper(BaseScraper):
                         if not title:
                             continue
 
-                        # URL stavíme z čísla zakázky - spolehlivější než parsování href
-                        # N006/26/V00011506 -> N006-26-V00011506
                         external_id = cells[1] if len(cells) > 1 else ""
                         if external_id and "/" in external_id:
                             id_slug = external_id.replace("/", "-")
@@ -107,12 +95,20 @@ class NenScraper(BaseScraper):
                                 continue
                             row_url = f"https://nen.nipez.cz{href}" if href.startswith("/") else href
 
+                        # Odfiltrovat staré zakázky podle roku v čísle zakázky
+                        # N006/25/V00036754 = rok 2025, N006/26/... = rok 2026
+                        if external_id:
+                            year_match = re.search(r'N006[/-](\d{2})[/-]', external_id)
+                            if year_match and int(year_match.group(1)) < current_year - 1:
+                                logger.debug("NEN skip stará zakázka %s", external_id)
+                                continue
+
                         t = Tender(
                             source="NEN",
                             title=title,
                             url=row_url,
                             authority=cells[4] if len(cells) > 4 else None,
-                            published_at=None,  # NEN seznam datum zveřejnění neobsahuje
+                            published_at=None,
                             deadline_at=cells[5] if len(cells) > 5 else None,
                             external_id=external_id or None,
                         )
