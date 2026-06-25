@@ -239,6 +239,10 @@ class BaseScraper(ABC):
 
     @staticmethod
     def _parse_date(value: str) -> datetime | None:
+        if not value:
+            return None
+        # Normalizujeme mezery kolem teček: "18. 11. 2024" -> "18.11.2024"
+        value = re.sub(r'\s*\.\s*', '.', value.strip())
         for fmt in ("%d.%m.%Y", "%d.%m.%Y %H:%M", "%d.%m.%Y %H:%M:%S", "%Y-%m-%d", "%Y-%m-%dT%H:%M:%S"):
             try:
                 return datetime.strptime(value.strip()[:19], fmt)
