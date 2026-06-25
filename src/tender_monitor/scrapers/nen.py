@@ -99,7 +99,7 @@ class NenScraper(BaseScraper):
                         # N006/25/V00036754 = rok 2025, N006/26/... = rok 2026
                         if external_id:
                             year_match = re.search(r'N006[/-](\d{2})[/-]', external_id)
-                            if year_match and int(year_match.group(1)) < current_year - 1:
+                            if year_match and int(year_match.group(1)) < current_year:
                                 logger.debug("NEN skip stará zakázka %s", external_id)
                                 continue
 
