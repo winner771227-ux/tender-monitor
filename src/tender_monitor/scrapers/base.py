@@ -220,15 +220,15 @@ class BaseScraper(ABC):
             if published is None:
             # Použijeme scraped_at jako náhradní datum zveřejnění
             # Zakázky starší než 14 dní od prvního zachycení zahazujeme
-            scraped = tender.scraped_at.replace(tzinfo=None) if tender.scraped_at else None
-            if scraped is not None and scraped < cutoff:
-                logger.info(
-                    "SKIP stará bez data, scraped=%s: %s",
-                    scraped.date(), tender.title[:60],
-                )
-                continue
-            if scraped is None:
-                logger.info("POZOR bez data zveřejnění: %s – %s", self.source, tender.title[:60])
+                scraped = tender.scraped_at.replace(tzinfo=None) if tender.scraped_at else None
+                if scraped is not None and scraped < cutoff:
+                    logger.info(
+                        "SKIP stará bez data, scraped=%s: %s",
+                        scraped.date(), tender.title[:60],
+                    )
+                    continue
+                if scraped is None:
+                    logger.info("POZOR bez data zveřejnění: %s – %s", self.source, tender.title[:60])
 
             tender.matched_keywords = matches
             result.append(tender)
