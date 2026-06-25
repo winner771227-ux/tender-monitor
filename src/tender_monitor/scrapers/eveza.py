@@ -4,6 +4,10 @@ eVeZa ma fulltext vyhledavani bez prihlaseni na homepage.
 Filtr se odesila POST requestem - pouzivame Playwright pro vyplneni formulare.
 Fulltext hleda i v textu dokumentu, proto kontrolujeme ze klicove slovo
 je primo v nazvu zakazky.
+
+Struktura tabulky eVeZa:
+  Řádek 1 (název): [Název zakázky jako odkaz]
+  Řádek 2 (detail): [Stav] [Lhůta podání] [Zadavatel]
 """
 from __future__ import annotations
 
@@ -22,6 +26,14 @@ _DATE_RE = re.compile(r"\b\d{2}\.\d{2}\.\d{4}(?:\s+\d{2}:\d{2})?\b")
 _BASE_URL = "https://eveza.cz/"
 _FULLTEXT_ID = "MiddleContent_vzZakazkyPrehled_txtFultext"
 _SUBMIT_SELECTOR = "input[type='submit'][value='Vyhledat'], button:has-text('Vyhledat')"
+
+# Zadavatel je v URL: /profil-zadavatele/SLUG/zakazka/ID
+_AUTHORITY_RE = re.compile(r"/profil-zadavatele/([^/]+)/zakazka/(\d+)")
+
+
+def _slug_to_name(slug: str) -> str:
+    """Převede URL slug na čitelné jméno: lesy-ceske-republiky-sp -> Lesy české republiky s.p."""
+    return slug.replace("-", " ").title()
 
 
 class EvezaScraper(BaseScraper):
@@ -59,39 +71,48 @@ class EvezaScraper(BaseScraper):
                     logger.info("eVeZa '%s': radky=%s", keyword, len(rows))
 
                     found_kw = 0
-                    for row in rows:
+                    i = 0
+                    while i < len(rows):
+                        row = rows[i]
                         link = row.locator("a[href]").first
                         if not await link.count():
+                            i += 1
                             continue
 
                         href = await link.get_attribute("href")
                         if not href:
+                            i += 1
                             continue
 
                         title = (await link.inner_text()).strip()
                         if not title or len(title) < 5:
+                            i += 1
                             continue
 
-                        # eVeZa fulltext hledá i v dokumentech - chceme jen zakázky
-                        # kde klíčové slovo je přímo v názvu
+                        # Klíčové slovo musí být v názvu
                         if normalize_text(keyword) not in normalize_text(title):
+                            i += 1
                             continue
 
                         row_url = f"https://eveza.cz{href}" if href.startswith("/") else href
 
-                        cells = [
-                            (await c.inner_text()).strip()
-                            for c in await row.locator("td").all()
-                        ]
-
-                        deadline = None
+                        # Zadavatel z URL slug
                         authority = None
-                        for cell in cells:
-                            d = _DATE_RE.search(cell)
-                            if d and not deadline:
-                                deadline = d.group(0)
-                            elif len(cell) > 5 and not _DATE_RE.search(cell) and cell != title:
-                                authority = cell
+                        m = _AUTHORITY_RE.search(href)
+                        if m:
+                            authority = _slug_to_name(m.group(1))
+
+                        # Lhůta a stav z následujícího řádku (detail řádek)
+                        deadline = None
+                        if i + 1 < len(rows):
+                            next_cells = [
+                                (await c.inner_text()).strip()
+                                for c in await rows[i + 1].locator("td").all()
+                            ]
+                            for cell in next_cells:
+                                d = _DATE_RE.search(cell)
+                                if d and not deadline:
+                                    deadline = d.group(0)
 
                         t = Tender(
                             source=self.source,
@@ -103,12 +124,15 @@ class EvezaScraper(BaseScraper):
                         )
 
                         if _is_foreign(t):
+                            i += 1
                             continue
 
                         t.matched_keywords = [keyword]
-                        logger.info("eVeZa [%s] nalezena: '%s'", keyword, t.title[:60])
+                        logger.info("eVeZa [%s] nalezena: '%s' lhůta=%s zadavatel=%s",
+                                   keyword, t.title[:50], deadline, authority)
                         all_tenders.append(t)
                         found_kw += 1
+                        i += 1  # přeskočíme jen tento řádek, detail řádek přečteme příště
 
                     logger.info("eVeZa '%s': found=%s", keyword, found_kw)
 
