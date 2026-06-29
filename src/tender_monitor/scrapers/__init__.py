@@ -18,12 +18,13 @@ SCRAPER_CLASSES = (
     JosephineScraper,
     AspoScraper,            # ASPO – XML feed + NEN profil (Ministerstvo obrany)       # JOSEPHINE – centrální seznam, vyhledávání ✅
     ProfilyProebizScraper,  # Profily PROEBIZ – centrální seznam ✅
-    TenderArenaScraper,   # Tender Arena – ✅
+    
 
     # ⚠️ ČÁSTEČNĚ – přidáváme ale mohou vracet 0
     EvezaScraper,           # eVeZa – vyhledávání funguje, výsledky se ověřují
     # PortalDodavateleScraper,  # Portál Dodavatele – vyžaduje přihlášení, blokuje roboty
     # VhodneUverejneniScraper,  # Vhodné uveřejnění – timeout na GitHub Actions
+    # TenderArenaScraper,   # Tender Arena – ✅
 
     # ❌ DEAKTIVOVÁNO – nemají centrální vyhledávání nebo timeout
     
