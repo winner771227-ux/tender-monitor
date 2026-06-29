@@ -1,15 +1,15 @@
 """Scraper pro Tender Arena - tenderarena.cz
 
-Tender Arena ma verejne REST API:
-POST https://www.tenderarena.cz/dodavatel/chytre-vyhledavani/vyhledat
-Vraci JSON s polem 'polozky'.
+TenderArena blokuje prime HTTP requesty z GitHub Actions IP.
+Reseni: volame API pres Playwright page.evaluate() - fetch bezi
+v kontextu prohlizece primo na strance TenderArena, takze server
+jej vidi jako legitimni AJAX pozadavek ze sve vlastni stranky.
 """
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
-import urllib.request
 from datetime import datetime
 
 from playwright.async_api import Browser, Page
@@ -20,108 +20,129 @@ from tender_monitor.scrapers.base import BaseScraper, _is_foreign
 
 logger = logging.getLogger(__name__)
 
-_API_URL = "https://www.tenderarena.cz/dodavatel/chytre-vyhledavani/vyhledat"
-_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
-    ),
-    "Accept": "application/json, text/plain, */*",
-    "Content-Type": "application/json",
-    "Referer": "https://www.tenderarena.cz/dodavatel/chytre-vyhledavani",
-    "Origin": "https://www.tenderarena.cz",
-}
-
+_SEARCH_URL = "https://www.tenderarena.cz/dodavatel/chytre-vyhledavani"
+_API_PATH = "/dodavatel/chytre-vyhledavani/vyhledat"
 MAX_PER_KEYWORD = 10
-
-
-def _api_search(keyword: str) -> list[dict]:
-    """Synchronní volání TenderArena API."""
-    payload = json.dumps({
-        "dotaz": keyword,
-        "strankovani": {"stranka": 1, "pocetNaStranku": MAX_PER_KEYWORD},
-    }).encode("utf-8")
-
-    req = urllib.request.Request(_API_URL, data=payload, headers=_HEADERS, method="POST")
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        data = json.loads(resp.read().decode("utf-8"))
-    return data.get("polozky", [])
 
 
 class TenderArenaScraper(BaseScraper):
     source = "TenderArena"
-    url = "https://www.tenderarena.cz/dodavatel/chytre-vyhledavani"
+    url = _SEARCH_URL
+    per_keyword_timeout_ms = 45_000
 
     async def scrape(self, browser: Browser) -> ScrapeResult:
+        context = await browser.new_context(
+            user_agent=(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+            ),
+            locale="cs-CZ",
+        )
+        page = await context.new_page()
         all_tenders: list[Tender] = []
         error_msg = None
 
-        for keyword in self.keywords:
-            logger.info("TenderArena hledam: '%s'", keyword)
-            try:
-                # Voláme API v thread poolu aby neblokovalo event loop
-                loop = asyncio.get_event_loop()
-                polozky = await loop.run_in_executor(None, _api_search, keyword)
+        try:
+            # Nejprve načteme stránku aby prohlížeč měl správné cookies a origin
+            await page.goto(_SEARCH_URL, wait_until="domcontentloaded",
+                            timeout=self.per_keyword_timeout_ms)
+            await page.wait_for_timeout(2_000)
 
-                logger.info("TenderArena '%s': polozky=%s", keyword, len(polozky))
+            for keyword in self.keywords:
+                logger.info("TenderArena hledam: '%s'", keyword)
+                try:
+                    # Voláme API přes fetch v kontextu prohlížeče
+                    # Server vidí request jako AJAX ze své vlastní stránky
+                    payload = json.dumps({
+                        "dotaz": keyword,
+                        "strankovani": {"stranka": 1, "pocetNaStranku": MAX_PER_KEYWORD},
+                    })
 
-                found_kw = 0
-                for item in polozky:
-                    if found_kw >= MAX_PER_KEYWORD:
-                        break
+                    result = await page.evaluate(f"""
+                        async () => {{
+                            const resp = await fetch('{_API_PATH}', {{
+                                method: 'POST',
+                                headers: {{
+                                    'Content-Type': 'application/json',
+                                    'Accept': 'application/json, text/plain, */*',
+                                }},
+                                body: {repr(payload)},
+                            }});
+                            if (!resp.ok) return null;
+                            return await resp.json();
+                        }}
+                    """)
 
-                    title = item.get("nazev", "").strip()
-                    if not title:
+                    if not result:
+                        logger.warning("TenderArena '%s': prázdná odpověď", keyword)
                         continue
 
-                    # Klíčové slovo musí být v názvu
-                    if normalize_text(keyword) not in normalize_text(title):
-                        continue
+                    polozky = result.get("polozky", [])
+                    logger.info("TenderArena '%s': polozky=%s", keyword, len(polozky))
 
-                    external_id = item.get("idProZadavatele", "")
-                    row_url = (
-                        f"https://www.tenderarena.cz/dodavatel/zakazka/detail/{external_id}"
-                        if external_id else ""
-                    )
-                    if not row_url:
-                        continue
+                    found_kw = 0
+                    for item in polozky:
+                        if found_kw >= MAX_PER_KEYWORD:
+                            break
 
-                    authority = item.get("nazevZadavatele", "").strip() or None
+                        title = (item.get("nazev") or "").strip()
+                        if not title:
+                            continue
 
-                    deadline = None
-                    lhuta_raw = item.get("lhutaProPodaniNabidek")
-                    if lhuta_raw:
-                        try:
-                            dt = datetime.fromisoformat(lhuta_raw.replace("Z", "+00:00"))
-                            deadline = dt.strftime("%d.%m.%Y %H:%M")
-                        except Exception:
-                            deadline = lhuta_raw[:16]
+                        # Klíčové slovo musí být v názvu
+                        if normalize_text(keyword) not in normalize_text(title):
+                            continue
 
-                    t = Tender(
-                        source=self.source,
-                        title=title,
-                        url=row_url,
-                        authority=authority,
-                        published_at=None,
-                        deadline_at=deadline,
-                        external_id=external_id or None,
-                    )
+                        external_id = item.get("idProZadavatele", "")
+                        row_url = (
+                            f"https://www.tenderarena.cz/dodavatel/zakazka/detail/{external_id}"
+                            if external_id else ""
+                        )
+                        if not row_url:
+                            continue
 
-                    if _is_foreign(t):
-                        continue
+                        authority = (item.get("nazevZadavatele") or "").strip() or None
 
-                    t.matched_keywords = [keyword]
-                    logger.info("TenderArena [%s] nalezena: '%s'", keyword, t.title[:60])
-                    all_tenders.append(t)
-                    found_kw += 1
+                        deadline = None
+                        lhuta_raw = item.get("lhutaProPodaniNabidek")
+                        if lhuta_raw:
+                            try:
+                                dt = datetime.fromisoformat(lhuta_raw.replace("Z", "+00:00"))
+                                deadline = dt.strftime("%d.%m.%Y %H:%M")
+                            except Exception:
+                                deadline = lhuta_raw[:16]
 
-                logger.info("TenderArena '%s': found=%s", keyword, found_kw)
+                        t = Tender(
+                            source=self.source,
+                            title=title,
+                            url=row_url,
+                            authority=authority,
+                            published_at=None,
+                            deadline_at=deadline,
+                            external_id=external_id or None,
+                        )
 
-            except Exception as exc:
-                logger.warning("TenderArena keyword='%s' chyba: %s", keyword, exc)
-                error_msg = str(exc)
+                        if _is_foreign(t):
+                            continue
 
-            await asyncio.sleep(0.5)
+                        t.matched_keywords = [keyword]
+                        logger.info("TenderArena [%s] nalezena: '%s'", keyword, t.title[:60])
+                        all_tenders.append(t)
+                        found_kw += 1
+
+                    logger.info("TenderArena '%s': found=%s", keyword, found_kw)
+
+                except Exception as exc:
+                    logger.warning("TenderArena keyword='%s' chyba: %s", keyword, exc)
+                    error_msg = str(exc)
+
+                await asyncio.sleep(0.5)
+
+        except Exception as exc:
+            logger.warning("TenderArena chyba při načítání stránky: %s", exc)
+            error_msg = str(exc)
+        finally:
+            await context.close()
 
         unique = self.deduplicate_tenders(all_tenders)
         filtered = self._filter(unique)
