@@ -22,7 +22,6 @@ _SEARCH_URL = "https://www.tenderarena.cz/dodavatel/chytre-vyhledavani"
 _DATE_RE = re.compile(r"\b\d{2}\.\d{2}\.\d{4}(?:\s+\d{2}:\d{2})?\b")
 _ID_RE = re.compile(r"\bVZ\d+\b")
 
-# Max zakázek na klíčové slovo
 MAX_PER_KEYWORD = 10
 
 
@@ -51,28 +50,42 @@ class TenderArenaScraper(BaseScraper):
                                     timeout=self.per_keyword_timeout_ms)
                     await page.wait_for_timeout(3_000)
 
-                    # Vyplníme vyhledávací pole
-                    field = page.locator(".search-box__input").first
+                    # Input je uvnitř divu .search-box__input
+                    field = page.locator(".search-box__input input").first
+                    if not await field.count():
+                        # Fallback - zkusíme přímo input
+                        field = page.locator("input[type='text'], input[type='search']").first
                     if not await field.count():
                         logger.warning("TenderArena: input nenalezen")
                         break
 
                     await field.fill(keyword)
                     await field.press("Enter")
+
                     # Počkáme na načtení výsledků (Angular)
-                    await page.wait_for_timeout(4_000)
+                    try:
+                        await page.wait_for_selector(
+                            "app-chytre-vyhledavani-seznam",
+                            timeout=10_000
+                        )
+                    except Exception:
+                        pass
+                    await page.wait_for_timeout(3_000)
 
-                    # Výsledky jsou v blocích - každá zakázka má titulek v <a> nebo <strong>
-                    # Zkusíme najít kontejnery výsledků
-                    result_items = await page.locator("app-chytre-vyhledavani-seznam .item, "
-                                                       ".search-result, "
-                                                       "[class*='result'] > div, "
-                                                       ".container__content > div > div").all()
+                    body_text = await page.locator("body").inner_text()
+                    logger.info("TenderArena '%s': body_len=%s", keyword, len(body_text))
 
-                    # Fallback - načteme celý text a parsujeme
+                    # Zkusíme různé selektory pro výsledky
+                    result_items = await page.locator(
+                        "app-chytre-vyhledavani-seznam > div, "
+                        "[class*='vyhledavani-seznam'] > *, "
+                        ".search-result-item"
+                    ).all()
+
+                    # Fallback - nadpisy s odkazem
                     if not result_items:
-                        body_text = await page.locator("body").inner_text()
-                        logger.info("TenderArena '%s': body_len=%s", keyword, len(body_text))
+                        result_items = await page.locator("h3 a, h4 a, strong a").all()
+                        logger.info("TenderArena '%s': fallback links=%s", keyword, len(result_items))
 
                     logger.info("TenderArena '%s': items=%s", keyword, len(result_items))
 
@@ -81,16 +94,26 @@ class TenderArenaScraper(BaseScraper):
                         if found_kw >= MAX_PER_KEYWORD:
                             break
 
-                        text = (await item.inner_text()).strip()
-                        if not text or len(text) < 10:
+                        try:
+                            text = (await item.inner_text()).strip()
+                        except Exception:
                             continue
 
-                        # Název - první řádek nebo odkaz
+                        if not text or len(text) < 5:
+                            continue
+
+                        # Název - z odkazu nebo první řádek
                         link = item.locator("a").first
                         href = await link.get_attribute("href") if await link.count() else None
                         title = (await link.inner_text()).strip() if await link.count() else ""
                         if not title:
                             title = text.splitlines()[0].strip()
+
+                        if not title or len(title) < 5:
+                            # Pokud je item samotný odkaz
+                            if await item.evaluate("el => el.tagName") == "A":
+                                href = await item.get_attribute("href")
+                                title = text
 
                         if not title or len(title) < 5:
                             continue
@@ -101,13 +124,12 @@ class TenderArenaScraper(BaseScraper):
 
                         row_url = f"https://www.tenderarena.cz{href}" if href and href.startswith("/") else href
 
-                        # ID zakázky a lhůta
+                        # ID zakázky z textu
                         external_id = None
                         deadline = None
                         id_m = _ID_RE.search(text)
                         if id_m:
                             external_id = id_m.group(0)
-                            # URL z ID: /dodavatel/zakazka/detail/VZ0252557
                             if not row_url:
                                 row_url = f"https://www.tenderarena.cz/dodavatel/zakazka/detail/{external_id}"
 
@@ -117,7 +139,11 @@ class TenderArenaScraper(BaseScraper):
 
                         # Zadavatel - druhý řádek
                         lines = [l.strip() for l in text.splitlines() if l.strip()]
-                        authority = lines[1] if len(lines) > 1 and not _ID_RE.search(lines[1]) else None
+                        authority = None
+                        for line in lines[1:]:
+                            if not _ID_RE.search(line) and not _DATE_RE.search(line) and len(line) > 3:
+                                authority = line
+                                break
 
                         if not row_url:
                             continue
