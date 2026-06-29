@@ -1,8 +1,8 @@
 """Scraper pro Tender Arena - tenderarena.cz
 
 TenderArena blokuje prime requesty z GitHub Actions IP.
-Reseni: pouzivame ScraperAPI proxy ktery rotuje IP adresy.
-API klic se cte z env promenne SCRAPERAPI_KEY.
+Reseni: pouzivame ScraperAPI proxy.
+ScraperAPI pro POST: posílame jako form data s parametrem 'body'.
 """
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ import asyncio
 import json
 import logging
 import os
+import urllib.parse
 import urllib.request
 from datetime import datetime
 
@@ -22,41 +23,51 @@ from tender_monitor.scrapers.base import BaseScraper, _is_foreign
 logger = logging.getLogger(__name__)
 
 _API_URL = "https://www.tenderarena.cz/dodavatel/chytre-vyhledavani/vyhledat"
-_SCRAPER_API_URL = "https://api.scraperapi.com/"
 MAX_PER_KEYWORD = 10
 
 
 def _api_search(keyword: str, scraper_api_key: str) -> list[dict]:
     """Volání TenderArena API přes ScraperAPI proxy."""
-    payload = json.dumps({
+    # ScraperAPI POST: posíláme na jejich endpoint s parametry
+    # url= cílová URL
+    # body= JSON payload jako string
+    # Samotný request na ScraperAPI je POST s form-encoded daty
+    params = urllib.parse.urlencode({
+        "api_key": scraper_api_key,
+        "url": _API_URL,
+        "keep_headers": "true",
+    })
+    scraper_url = f"https://api.scraperapi.com/?{params}"
+
+    json_body = json.dumps({
         "dotaz": keyword,
         "strankovani": {"stranka": 1, "pocetNaStranku": MAX_PER_KEYWORD},
-    }).encode("utf-8")
-
-    # ScraperAPI - odesílá request přes rotující IP adresy
-    import urllib.parse
-    proxy_url = (
-        f"{_SCRAPER_API_URL}"
-        f"?api_key={scraper_api_key}"
-        f"&url={urllib.parse.quote(_API_URL, safe='')}"
-        f"&method=POST"
-        f"&content_type=application/json"
-        f"&keep_headers=true"
-    )
+    })
 
     req = urllib.request.Request(
-        proxy_url,
-        data=payload,
+        scraper_url,
+        data=json_body.encode("utf-8"),
         headers={
             "Content-Type": "application/json",
-            "Accept": "application/json, text/plain, */*",
+            "Accept": "application/json",
             "Origin": "https://www.tenderarena.cz",
             "Referer": "https://www.tenderarena.cz/dodavatel/chytre-vyhledavani",
+            "X-Requested-With": "XMLHttpRequest",
         },
         method="POST",
     )
+
     with urllib.request.urlopen(req, timeout=60) as resp:
-        data = json.loads(resp.read().decode("utf-8"))
+        raw = resp.read().decode("utf-8")
+
+    logger.debug("TenderArena raw response: %s", raw[:200])
+
+    # Zkontrolujeme jestli jsme dostali JSON
+    if not raw.strip().startswith("{"):
+        logger.warning("TenderArena: odpověď není JSON: %s", raw[:100])
+        return []
+
+    data = json.loads(raw)
     return data.get("polozky", [])
 
 
@@ -71,6 +82,7 @@ class TenderArenaScraper(BaseScraper):
             return ScrapeResult(source=self.source, tenders=[],
                                 error="SCRAPERAPI_KEY není nastavený")
 
+        logger.info("TenderArena: ScraperAPI klíč nalezen, délka=%s", len(scraper_api_key))
         all_tenders: list[Tender] = []
         error_msg = None
 
@@ -81,7 +93,6 @@ class TenderArenaScraper(BaseScraper):
                 polozky = await loop.run_in_executor(
                     None, _api_search, keyword, scraper_api_key
                 )
-
                 logger.info("TenderArena '%s': polozky=%s", keyword, len(polozky))
 
                 found_kw = 0
