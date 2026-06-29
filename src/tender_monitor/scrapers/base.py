@@ -120,7 +120,7 @@ _PL_WORDS = {
 def _is_foreign(tender: Tender) -> bool:
     """Return True when the tender appears to be Slovak or Polish."""
     text = normalize_text(
-        " ".join(part or "" for part in (tender.title, tender.authority, tender.url, tender.description))
+        " ".join(part or "" for part in (tender.title, tender.authority, tender.description))
     )
     for word in _SK_WORDS | _PL_WORDS:
         if normalize_text(word) in text:
@@ -192,8 +192,7 @@ class BaseScraper(ABC):
 
     def _filter(self, tenders: list[Tender]) -> list[Tender]:
         now = datetime.now()
-        # Zakázky zveřejněné v posledních 30 dnech
-        cutoff = now - timedelta(days=30)
+        cutoff = now - timedelta(days=14)
         result: list[Tender] = []
         for tender in tenders:
             # 1. Odmítnout slovenské a polské zakázky
@@ -208,8 +207,6 @@ class BaseScraper(ABC):
             if not matches:
                 continue
             # 3. Datum ZVEŘEJNĚNÍ (published_at) nesmí být starší než 14 dní
-            #    Deadline (lhůta podání) se ignoruje – nezajímá nás
-            #    Pokud datum neznáme, zakázku zachováme
             published = self._parse_date(tender.published_at) if tender.published_at else None
             if published is not None and published < cutoff:
                 logger.info(
@@ -217,8 +214,18 @@ class BaseScraper(ABC):
                     tender.published_at, tender.title[:60],
                 )
                 continue
+            # 4. Zakázky bez published_at - filtrujeme podle lhůty podání
+            #    Pokud lhůta vypršela před více než 60 dny, zakázka je stará
             if published is None:
-                logger.info("POZOR bez data zveřejnění: %s – %s", self.source, tender.title[:60])
+                deadline = self._parse_date(tender.deadline_at) if tender.deadline_at else None
+                if deadline is not None and deadline < (now - timedelta(days=60)):
+                    logger.info(
+                        "SKIP stará bez data, lhůta=%s: %s",
+                        tender.deadline_at, tender.title[:60],
+                    )
+                    continue
+                if deadline is None:
+                    logger.info("POZOR bez data zveřejnění: %s – %s", self.source, tender.title[:60])
 
             tender.matched_keywords = matches
             result.append(tender)
@@ -232,6 +239,10 @@ class BaseScraper(ABC):
 
     @staticmethod
     def _parse_date(value: str) -> datetime | None:
+        if not value:
+            return None
+        # Normalizujeme mezery kolem teček: "18. 11. 2024" -> "18.11.2024"
+        value = re.sub(r'\s*\.\s*', '.', value.strip())
         for fmt in ("%d.%m.%Y", "%d.%m.%Y %H:%M", "%d.%m.%Y %H:%M:%S", "%Y-%m-%d", "%Y-%m-%dT%H:%M:%S"):
             try:
                 return datetime.strptime(value.strip()[:19], fmt)

@@ -15,13 +15,7 @@ DEFAULT_KEYWORDS = (
     "odstranění objektu",
     "demoliční práce",
     "demoliční",
-    "likvidace stavby",
-    "likvidace objektu",
-    # Doplňující výrazy
-    "asanace",
-    "sanace objektu",
     "zbourání",
-    "odstranění stavby",  # záloha pro varianty bez diakritiky
 )
 
 
