@@ -52,7 +52,7 @@ class TenderArenaScraper(BaseScraper):
                     await page.wait_for_timeout(3_000)
 
                     # Vyplníme vyhledávací pole
-                    field = page.locator(".search-box__input").first
+                    field = page.locator(".search-box__input input").first
                     if not await field.count():
                         logger.warning("TenderArena: input nenalezen")
                         break
