@@ -24,7 +24,7 @@ SCRAPER_CLASSES = (
     EvezaScraper,           # eVeZa – vyhledávání funguje, výsledky se ověřují
     # PortalDodavateleScraper,  # Portál Dodavatele – vyžaduje přihlášení, blokuje roboty
     # VhodneUverejneniScraper,  # Vhodné uveřejnění – timeout na GitHub Actions
-    # TenderArenaScraper,   # Tender Arena – ✅
+    TenderArenaScraper,   # Tender Arena – ✅
 
     # ❌ DEAKTIVOVÁNO – nemají centrální vyhledávání nebo timeout
     
