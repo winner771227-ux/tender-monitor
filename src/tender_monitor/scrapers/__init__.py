@@ -25,7 +25,7 @@ SCRAPER_CLASSES = (
     # VhodneUverejneniScraper,  # Vhodné uveřejnění – timeout na GitHub Actions
 
     # ❌ DEAKTIVOVÁNO – nemají centrální vyhledávání nebo timeout
-    # TenderArenaScraper,   # Tender Arena – pouze profily zadavatelů, ne centrální vyhledávání
+    TenderArenaScraper,   # Tender Arena – pouze profily zadavatelů, ne centrální vyhledávání
     # EZakazkyScraper,      # E-ZAKAZKY – pouze profily zadavatelů, ne centrální vyhledávání
     # TenderMarketScraper,  # Tender Market – načte se prázdné
     # ProfilZadavateleVzScraper,  # Profil VZ – prázdná odpověď
