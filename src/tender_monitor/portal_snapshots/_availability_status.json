@@ -1,0 +1,74 @@
+{
+  "TenderArena": {
+    "reachable": true,
+    "status": 200,
+    "content_type": "text/html",
+    "is_json": false,
+    "looks_blocked": true,
+    "needs_login": false,
+    "ok": false
+  },
+  "E-ZAKAZKY": {
+    "reachable": true,
+    "status": 404,
+    "content_type": "text/html",
+    "is_json": false,
+    "looks_blocked": false,
+    "needs_login": false,
+    "ok": false
+  },
+  "Vhodné uveřejnění": {
+    "reachable": true,
+    "status": 404,
+    "content_type": "text/html",
+    "is_json": false,
+    "looks_blocked": true,
+    "needs_login": true,
+    "ok": false
+  },
+  "Portál Dodavatele": {
+    "reachable": true,
+    "status": 200,
+    "content_type": "text/html",
+    "is_json": false,
+    "looks_blocked": false,
+    "needs_login": false,
+    "ok": true
+  },
+  "FEN (podo.fen.cz)": {
+    "reachable": true,
+    "status": 200,
+    "content_type": "text/html",
+    "is_json": false,
+    "looks_blocked": false,
+    "needs_login": false,
+    "ok": true
+  },
+  "VVZ": {
+    "reachable": true,
+    "status": 200,
+    "content_type": "text/html",
+    "is_json": false,
+    "looks_blocked": false,
+    "needs_login": false,
+    "ok": true
+  },
+  "Tender Market": {
+    "reachable": true,
+    "status": 200,
+    "content_type": "text/html",
+    "is_json": false,
+    "looks_blocked": false,
+    "needs_login": false,
+    "ok": true
+  },
+  "Profil zadavatele VZ": {
+    "reachable": true,
+    "status": 200,
+    "content_type": "text/html",
+    "is_json": false,
+    "looks_blocked": false,
+    "needs_login": false,
+    "ok": true
+  }
+}
