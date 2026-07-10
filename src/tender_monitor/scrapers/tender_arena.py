@@ -20,13 +20,7 @@ from tender_monitor.scrapers.base import BaseScraper, _is_foreign
 logger = logging.getLogger(__name__)
 
 _SEARCH_URL = "https://www.tenderarena.cz/dodavatel/chytre-vyhledavani"
-<<<<<<< HEAD
-_DATE_RE = re.compile(r"\b\d{2}\.\d{2}\.\d{4}(?:\s+\d{2}:\d{2})?\b")
-_ID_RE = re.compile(r"\bVZ\d+\b")
-
-=======
 _API_URL = "https://www.tenderarena.cz/dodavatel/chytre-vyhledavani/vyhledat"
->>>>>>> 06dc5ef35514d19904d483263eebc8fe8ce74e5b
 MAX_PER_KEYWORD = 10
 
 
@@ -63,46 +57,6 @@ class TenderArenaScraper(BaseScraper):
                         "strankovani": {"stranka": 1, "pocetNaStranku": MAX_PER_KEYWORD},
                     })
 
-<<<<<<< HEAD
-                    # Input je uvnitř divu .search-box__input
-                    field = page.locator(".search-box__input input").first
-                    if not await field.count():
-                        # Fallback - zkusíme přímo input
-                        field = page.locator("input[type='text'], input[type='search']").first
-                    if not await field.count():
-                        logger.warning("TenderArena: input nenalezen")
-                        break
-
-                    await field.fill(keyword)
-                    await field.press("Enter")
-
-                    # Počkáme na načtení výsledků (Angular)
-                    try:
-                        await page.wait_for_selector(
-                            "app-chytre-vyhledavani-seznam",
-                            timeout=10_000
-                        )
-                    except Exception:
-                        pass
-                    await page.wait_for_timeout(3_000)
-
-                    body_text = await page.locator("body").inner_text()
-                    logger.info("TenderArena '%s': body_len=%s", keyword, len(body_text))
-
-                    # Zkusíme různé selektory pro výsledky
-                    result_items = await page.locator(
-                        "app-chytre-vyhledavani-seznam > div, "
-                        "[class*='vyhledavani-seznam'] > *, "
-                        ".search-result-item"
-                    ).all()
-
-                    # Fallback - nadpisy s odkazem
-                    if not result_items:
-                        result_items = await page.locator("h3 a, h4 a, strong a").all()
-                        logger.info("TenderArena '%s': fallback links=%s", keyword, len(result_items))
-
-                    logger.info("TenderArena '%s': items=%s", keyword, len(result_items))
-=======
                     # page.request.post() používá cookies ze session stránky
                     response = await page.request.post(
                         _API_URL,
@@ -127,76 +81,24 @@ class TenderArenaScraper(BaseScraper):
                     data = json.loads(raw)
                     polozky = data.get("polozky", [])
                     logger.info("TenderArena '%s': polozky=%s", keyword, len(polozky))
->>>>>>> 06dc5ef35514d19904d483263eebc8fe8ce74e5b
 
                     found_kw = 0
                     for item in polozky:
                         if found_kw >= MAX_PER_KEYWORD:
                             break
 
-<<<<<<< HEAD
-                        try:
-                            text = (await item.inner_text()).strip()
-                        except Exception:
-                            continue
-
-                        if not text or len(text) < 5:
-                            continue
-
-                        # Název - z odkazu nebo první řádek
-                        link = item.locator("a").first
-                        href = await link.get_attribute("href") if await link.count() else None
-                        title = (await link.inner_text()).strip() if await link.count() else ""
-                        if not title:
-                            title = text.splitlines()[0].strip()
-
-                        if not title or len(title) < 5:
-                            # Pokud je item samotný odkaz
-                            if await item.evaluate("el => el.tagName") == "A":
-                                href = await item.get_attribute("href")
-                                title = text
-
-                        if not title or len(title) < 5:
-=======
                         title = (item.get("nazev") or "").strip()
                         if not title:
->>>>>>> 06dc5ef35514d19904d483263eebc8fe8ce74e5b
                             continue
 
                         if normalize_text(keyword) not in normalize_text(title):
                             continue
 
-<<<<<<< HEAD
-                        row_url = f"https://www.tenderarena.cz{href}" if href and href.startswith("/") else href
-
-                        # ID zakázky z textu
-                        external_id = None
-                        deadline = None
-                        id_m = _ID_RE.search(text)
-                        if id_m:
-                            external_id = id_m.group(0)
-                            if not row_url:
-                                row_url = f"https://www.tenderarena.cz/dodavatel/zakazka/detail/{external_id}"
-
-                        date_m = _DATE_RE.search(text)
-                        if date_m:
-                            deadline = date_m.group(0)
-
-                        # Zadavatel - druhý řádek
-                        lines = [l.strip() for l in text.splitlines() if l.strip()]
-                        authority = None
-                        for line in lines[1:]:
-                            if not _ID_RE.search(line) and not _DATE_RE.search(line) and len(line) > 3:
-                                authority = line
-                                break
-
-=======
                         external_id = item.get("idProZadavatele", "")
                         row_url = (
                             f"https://www.tenderarena.cz/dodavatel/zakazka/detail/{external_id}"
                             if external_id else ""
                         )
->>>>>>> 06dc5ef35514d19904d483263eebc8fe8ce74e5b
                         if not row_url:
                             continue
 
