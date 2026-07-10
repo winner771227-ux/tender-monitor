@@ -57,9 +57,16 @@ def check_availability(url: str, expect: str) -> dict:
 
 
 def availability_changed_for_better(old: dict | None, new: dict) -> bool:
-    """True, pokud portál dřív nefungoval a teď vypadá použitelně."""
+    """
+    True, pokud portál dřív nefungoval a teď vypadá použitelně.
+
+    Při prvním měření (old is None) se jen uloží výchozí stav a nic
+    se nehlásí — odpověď 200 totiž sama o sobě neznamená, že portál
+    je pro scraping použitelný (např. VVZ vrací 200, ale obsah se
+    vykresluje až JavaScriptem). Hlásíme až ZMĚNU oproti minule.
+    """
     if not new.get("ok"):
         return False
     if old is None:
-        return True  # první měření a rovnou vypadá dobře → stojí za zprávu
+        return False
     return not old.get("ok")

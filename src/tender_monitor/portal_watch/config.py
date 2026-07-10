@@ -108,7 +108,7 @@ BLOCKED_PORTALS = [
 ]
 
 # Kolik sekund čekat na odpověď portálu
-REQUEST_TIMEOUT = 30
+REQUEST_TIMEOUT = 60  # NEN (včetně ASPO XML feedu) bývá pomalý
 
 # Hlavička prohlížeče — stejný princip jako u scraperů
 USER_AGENT = (

@@ -118,6 +118,13 @@ def main() -> int:
                            encoding="utf-8")
     snapshots_written = True
 
+    # Informace pro workflow, jestli má uložit nové otisky — zapisujeme
+    # PŘED odesláním e-mailu, aby se otisky uložily i při chybě e-mailu.
+    gh_output = os.environ.get("GITHUB_OUTPUT")
+    if gh_output:
+        with open(gh_output, "a", encoding="utf-8") as f:
+            f.write(f"snapshots_written={'true' if snapshots_written else 'false'}\n")
+
     # ---------- 3) Hlášení ----------
     if structure_issues or opportunities or errors:
         body = build_email_body(structure_issues, opportunities, errors)
@@ -131,13 +138,6 @@ def main() -> int:
     else:
         print("\nVše v pořádku — žádné změny, e-mail se neposílá.")
 
-    # Návratový kód 0 i při zjištěných změnách — workflow nemá "spadnout",
-    # zpráva odešla e-mailem. Soubor GITHUB_OUTPUT informuje workflow,
-    # jestli má commitnout nové otisky.
-    gh_output = os.environ.get("GITHUB_OUTPUT")
-    if gh_output:
-        with open(gh_output, "a", encoding="utf-8") as f:
-            f.write(f"snapshots_written={'true' if snapshots_written else 'false'}\n")
     return 0
 
 

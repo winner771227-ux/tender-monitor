@@ -1,0 +1,67 @@
+name: Hlídač portálů (portal watch)
+
+on:
+  # Ruční spuštění / spuštění přes cron-job.org (workflow_dispatch API),
+  # stejný mechanismus jako u hlavního monitoringu
+  workflow_dispatch:
+    inputs:
+      update_snapshots:
+        description: "Aktualizovat otisky (po opravě scraperu)"
+        type: boolean
+        default: false
+  # Záložní plán přímo v GitHubu: každé pondělí ráno.
+  # GitHub cron je nespolehlivý — hlavní spouštění nastav v cron-job.org
+  # (1× týdně), tohle je jen pojistka.
+  schedule:
+    - cron: "0 4 * * 1"
+
+# Zabrání souběhu dvou běhů najednou
+concurrency:
+  group: portal-watch
+  cancel-in-progress: false
+
+permissions:
+  contents: write   # kvůli ukládání otisků zpět do repozitáře
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Stáhnout repozitář
+        uses: actions/checkout@v4
+
+      - name: Nastavit Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Nainstalovat závislosti
+        run: pip install requests beautifulsoup4
+
+      - name: Spustit hlídače
+        id: watch
+        env:
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          SMTP_FROM: ${{ secrets.SMTP_FROM }}
+          SMTP_TO: ${{ secrets.SMTP_TO }}
+          SMTP_USE_TLS: ${{ secrets.SMTP_USE_TLS || 'true' }}
+          UPDATE_SNAPSHOTS: ${{ inputs.update_snapshots && '1' || '' }}
+        run: |
+          cd src
+          python -m tender_monitor.portal_watch.main
+
+      - name: Uložit otisky zpět do repozitáře
+        if: always() && steps.watch.outputs.snapshots_written == 'true'
+        run: |
+          git config user.name "portal-watch-bot"
+          git config user.email "actions@github.com"
+          git add src/tender_monitor/portal_snapshots/
+          if git diff --cached --quiet; then
+            echo "Žádné změny otisků k uložení."
+          else
+            git commit -m "portal-watch: aktualizace otisků portálů"
+            git push
+          fi

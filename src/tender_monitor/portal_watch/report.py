@@ -62,7 +62,8 @@ def send_email(subject: str, body: str) -> None:
     password = os.environ["SMTP_PASSWORD"]
     sender = os.environ.get("SMTP_FROM", username)
     recipient = os.environ["SMTP_TO"]
-    use_tls = os.environ.get("SMTP_USE_TLS", "true").lower() in ("1", "true", "yes")
+    # Pojistka: prázdná hodnota (chybějící secret) NESMÍ vypnout TLS
+    use_tls = (os.environ.get("SMTP_USE_TLS") or "true").lower() in ("1", "true", "yes")
 
     msg = EmailMessage()
     msg["Subject"] = subject
@@ -70,8 +71,11 @@ def send_email(subject: str, body: str) -> None:
     msg["To"] = recipient
     msg.set_content(body)
 
+    # Stejný postup jako v hlavním emailer.py (ehlo → starttls → ehlo → login)
     with smtplib.SMTP(host, port, timeout=60) as server:
+        server.ehlo()
         if use_tls:
             server.starttls()
+            server.ehlo()
         server.login(username, password)
         server.send_message(msg)
