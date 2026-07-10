@@ -48,19 +48,35 @@ def main() -> int:
     errors = []
     snapshots_written = False
 
+    # Paměť neúspěšných stažení z minulého běhu — jednorázové zaškobrtnutí
+    # portálu (např. pomalý NEN) se jen zaloguje; e-mailem se hlásí až
+    # chyba, která se opakuje dva běhy po sobě.
+    fetch_errors_path = snap_dir / "_fetch_errors.json"
+    prev_fetch_errors = set()
+    if fetch_errors_path.exists():
+        prev_fetch_errors = set(json.loads(fetch_errors_path.read_text(encoding="utf-8")))
+    new_fetch_errors = set()
+
     # ---------- 1) Funkční portály: kontrola struktury ----------
     for portal in WATCHED_PORTALS:
         for page in portal["pages"]:
             path = _snapshot_path(snap_dir, portal["name"], page["label"])
+            page_key = f"{portal['name']}::{page['label']}"
             print(f"Kontroluji {portal['name']} — {page['label']} ({page['url']})")
             try:
                 new_fp = build_fingerprint(page["url"], page["kind"])
             except Exception as exc:
-                errors.append({
-                    "portal": portal["name"],
-                    "detail": f"Stránku '{page['label']}' se nepodařilo stáhnout "
-                              f"({type(exc).__name__}: {exc}).",
-                })
+                new_fetch_errors.add(page_key)
+                detail = (f"Stránku '{page['label']}' se nepodařilo stáhnout "
+                          f"({type(exc).__name__}: {exc}).")
+                if page_key in prev_fetch_errors:
+                    print(f"  ❌ {detail} (opakovaně — jde do hlášení)")
+                    errors.append({
+                        "portal": portal["name"],
+                        "detail": detail + " Chyba se opakuje druhý běh po sobě.",
+                    })
+                else:
+                    print(f"  (info) {detail} Poprvé — nehlásím, počkám na příští běh.")
                 continue
 
             if not path.exists():
@@ -116,6 +132,8 @@ def main() -> int:
 
     status_path.write_text(json.dumps(new_statuses, ensure_ascii=False, indent=2),
                            encoding="utf-8")
+    fetch_errors_path.write_text(json.dumps(sorted(new_fetch_errors), ensure_ascii=False,
+                                            indent=2), encoding="utf-8")
     snapshots_written = True
 
     # Informace pro workflow, jestli má uložit nové otisky — zapisujeme

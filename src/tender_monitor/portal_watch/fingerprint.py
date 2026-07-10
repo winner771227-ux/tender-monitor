@@ -23,14 +23,27 @@ from .config import REQUEST_TIMEOUT, USER_AGENT
 
 
 def fetch(url: str):
-    """Stáhne stránku a vrátí odpověď (nebo vyhodí výjimku)."""
-    resp = requests.get(
-        url,
-        headers={"User-Agent": USER_AGENT, "Accept-Language": "cs,en;q=0.8"},
-        timeout=REQUEST_TIMEOUT,
-        allow_redirects=True,
-    )
-    return resp
+    """
+    Stáhne stránku a vrátí odpověď (nebo vyhodí výjimku).
+    Při selhání (timeout apod.) to zkusí ještě jednou —
+    NEN a spol. občas jen chvíli nestíhají.
+    """
+    import time
+
+    last_exc = None
+    for attempt in (1, 2):
+        try:
+            return requests.get(
+                url,
+                headers={"User-Agent": USER_AGENT, "Accept-Language": "cs,en;q=0.8"},
+                timeout=REQUEST_TIMEOUT,
+                allow_redirects=True,
+            )
+        except Exception as exc:
+            last_exc = exc
+            if attempt == 1:
+                time.sleep(10)  # krátká pauza a druhý pokus
+    raise last_exc
 
 
 def _html_fingerprint(html_text: str) -> dict:
