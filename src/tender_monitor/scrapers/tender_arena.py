@@ -1,13 +1,14 @@
 """Scraper pro Tender Arena - tenderarena.cz
 
-Tender Arena je Angular SPA. Vyhledavani pres JavaScript.
-Pouzivame Playwright - vyplnime input, pocame na vysledky.
+TenderArena vyzaduje platnou session pro API volani.
+Reseni: Playwright nejdrive nacte stranku (ziska cookies/session),
+pak zavola API pres page.request.post() ktery pouziva stejnou session.
 """
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
-import re
 from datetime import datetime
 
 from playwright.async_api import Browser, Page
@@ -19,9 +20,13 @@ from tender_monitor.scrapers.base import BaseScraper, _is_foreign
 logger = logging.getLogger(__name__)
 
 _SEARCH_URL = "https://www.tenderarena.cz/dodavatel/chytre-vyhledavani"
+<<<<<<< HEAD
 _DATE_RE = re.compile(r"\b\d{2}\.\d{2}\.\d{4}(?:\s+\d{2}:\d{2})?\b")
 _ID_RE = re.compile(r"\bVZ\d+\b")
 
+=======
+_API_URL = "https://www.tenderarena.cz/dodavatel/chytre-vyhledavani/vyhledat"
+>>>>>>> 06dc5ef35514d19904d483263eebc8fe8ce74e5b
 MAX_PER_KEYWORD = 10
 
 
@@ -43,13 +48,22 @@ class TenderArenaScraper(BaseScraper):
         error_msg = None
 
         try:
+            # Načteme stránku - získáme cookies a session
+            logger.info("TenderArena: načítám stránku pro session...")
+            await page.goto(_SEARCH_URL, wait_until="domcontentloaded",
+                            timeout=self.per_keyword_timeout_ms)
+            await page.wait_for_timeout(3_000)
+            logger.info("TenderArena: stránka načtena, URL=%s", page.url)
+
             for keyword in self.keywords:
                 logger.info("TenderArena hledam: '%s'", keyword)
                 try:
-                    await page.goto(_SEARCH_URL, wait_until="domcontentloaded",
-                                    timeout=self.per_keyword_timeout_ms)
-                    await page.wait_for_timeout(3_000)
+                    payload = json.dumps({
+                        "dotaz": keyword,
+                        "strankovani": {"stranka": 1, "pocetNaStranku": MAX_PER_KEYWORD},
+                    })
 
+<<<<<<< HEAD
                     # Input je uvnitř divu .search-box__input
                     field = page.locator(".search-box__input input").first
                     if not await field.count():
@@ -88,12 +102,39 @@ class TenderArenaScraper(BaseScraper):
                         logger.info("TenderArena '%s': fallback links=%s", keyword, len(result_items))
 
                     logger.info("TenderArena '%s': items=%s", keyword, len(result_items))
+=======
+                    # page.request.post() používá cookies ze session stránky
+                    response = await page.request.post(
+                        _API_URL,
+                        data=payload,
+                        headers={
+                            "Content-Type": "application/json",
+                            "Accept": "application/json, text/plain, */*",
+                            "X-Requested-With": "XMLHttpRequest",
+                            "Referer": _SEARCH_URL,
+                        },
+                    )
+
+                    status = response.status
+                    raw = await response.text()
+                    logger.info("TenderArena '%s': status=%s body_start=%s",
+                                keyword, status, raw[:80])
+
+                    if not raw.strip().startswith("{"):
+                        logger.warning("TenderArena '%s': není JSON", keyword)
+                        continue
+
+                    data = json.loads(raw)
+                    polozky = data.get("polozky", [])
+                    logger.info("TenderArena '%s': polozky=%s", keyword, len(polozky))
+>>>>>>> 06dc5ef35514d19904d483263eebc8fe8ce74e5b
 
                     found_kw = 0
-                    for item in result_items:
+                    for item in polozky:
                         if found_kw >= MAX_PER_KEYWORD:
                             break
 
+<<<<<<< HEAD
                         try:
                             text = (await item.inner_text()).strip()
                         except Exception:
@@ -116,12 +157,16 @@ class TenderArenaScraper(BaseScraper):
                                 title = text
 
                         if not title or len(title) < 5:
+=======
+                        title = (item.get("nazev") or "").strip()
+                        if not title:
+>>>>>>> 06dc5ef35514d19904d483263eebc8fe8ce74e5b
                             continue
 
-                        # Klíčové slovo musí být v názvu
                         if normalize_text(keyword) not in normalize_text(title):
                             continue
 
+<<<<<<< HEAD
                         row_url = f"https://www.tenderarena.cz{href}" if href and href.startswith("/") else href
 
                         # ID zakázky z textu
@@ -145,8 +190,26 @@ class TenderArenaScraper(BaseScraper):
                                 authority = line
                                 break
 
+=======
+                        external_id = item.get("idProZadavatele", "")
+                        row_url = (
+                            f"https://www.tenderarena.cz/dodavatel/zakazka/detail/{external_id}"
+                            if external_id else ""
+                        )
+>>>>>>> 06dc5ef35514d19904d483263eebc8fe8ce74e5b
                         if not row_url:
                             continue
+
+                        authority = (item.get("nazevZadavatele") or "").strip() or None
+
+                        deadline = None
+                        lhuta_raw = item.get("lhutaProPodaniNabidek")
+                        if lhuta_raw:
+                            try:
+                                dt = datetime.fromisoformat(lhuta_raw.replace("Z", "+00:00"))
+                                deadline = dt.strftime("%d.%m.%Y %H:%M")
+                            except Exception:
+                                deadline = lhuta_raw[:16]
 
                         t = Tender(
                             source=self.source,
@@ -155,7 +218,7 @@ class TenderArenaScraper(BaseScraper):
                             authority=authority,
                             published_at=None,
                             deadline_at=deadline,
-                            external_id=external_id,
+                            external_id=external_id or None,
                         )
 
                         if _is_foreign(t):
@@ -172,8 +235,11 @@ class TenderArenaScraper(BaseScraper):
                     logger.warning("TenderArena keyword='%s' chyba: %s", keyword, exc)
                     error_msg = str(exc)
 
-                await asyncio.sleep(1)
+                await asyncio.sleep(0.5)
 
+        except Exception as exc:
+            logger.warning("TenderArena chyba: %s", exc)
+            error_msg = str(exc)
         finally:
             await context.close()
 
