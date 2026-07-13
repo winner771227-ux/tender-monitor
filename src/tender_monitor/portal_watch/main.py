@@ -69,7 +69,12 @@ def main() -> int:
                 new_fetch_errors.add(page_key)
                 detail = (f"Stránku '{page['label']}' se nepodařilo stáhnout "
                           f"({type(exc).__name__}: {exc}).")
-                if page_key in prev_fetch_errors:
+                # Nepovinné stránky (např. ASPO XML feed) mají ve scraperu
+                # vlastní zálohu — jejich nedostupnost není chyba, jen se loguje.
+                if page.get("optional"):
+                    print(f"  (info) {detail} Stránka je nepovinná (scraper má "
+                          f"zálohu) — nehlásím e-mailem.")
+                elif page_key in prev_fetch_errors:
                     print(f"  ❌ {detail} (opakovaně — jde do hlášení)")
                     errors.append({
                         "portal": portal["name"],

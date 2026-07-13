@@ -29,9 +29,15 @@ WATCHED_PORTALS = [
         "name": "ASPO",
         # zdroj: scrapers/aspo.py — XML feed + záložní NEN profil
         "pages": [
+            # XML feed je "nepovinný": scraper aspo.py mu dává jen 10 sekund
+            # a při nedostupnosti automaticky přepne na zálohu přes prohlížeč
+            # (NEN profil níže). Nedostupnost feedu proto NENÍ chyba a hlídač
+            # kvůli ní neposílá e-mail — jen si ji zapíše do logu.
+            # Když se feed stáhnout podaří, jeho strukturu normálně hlídáme.
             {"label": "XML feed",
              "url": "https://nen.nipez.cz/profil/ASPO/xmldatavz?Typ=1",
-             "kind": "xml"},
+             "kind": "xml",
+             "optional": True},
             {"label": "NEN profil",
              "url": "https://nen.nipez.cz/profil/ASPO",
              "kind": "html"},
