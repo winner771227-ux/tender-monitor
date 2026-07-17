@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 
 from playwright.async_api import Browser, Page
 
@@ -30,7 +31,10 @@ from tender_monitor.scrapers.base import BaseScraper, _is_foreign
 
 logger = logging.getLogger(__name__)
 
-MAX_ROWS_PER_KEYWORD = 15
+MAX_ROWS_PER_KEYWORD = 12
+
+# Řádek s číslem zakázky vypadá typicky jako "RVZ2600110661" nebo "N006/25/V..."
+_ID_LINE_RE = re.compile(r"^(RVZ\d{6,}|N\d{3}/\d{2}/[A-Z]\d+|[A-Z]{2,6}\d{4,})$")
 
 # Odkaz na detail zakázky - zkoušíme víc obvyklých vzorů URL najednou
 _DETAIL_LINK_SELECTOR = (
@@ -198,11 +202,9 @@ class ZakazkyGovScraper(BaseScraper):
                 continue
             seen_urls.add(url)
 
-            title = self.clean_text(await link.inner_text())
-            if not title or len(title) < 5:
-                continue
-
-            # Zkusíme najít okolní řádek/kartu kvůli datu a zadavateli
+            # Karta zakázky - zkusíme najít celý řádek/kartu (obsahuje víc
+            # informací než jen samotný odkaz, který někdy obaluje pouze
+            # číslo zakázky).
             container = link.locator(
                 "xpath=ancestor::tr[1] | ancestor::*[contains(@class,'card')][1] "
                 "| ancestor::li[1] | ancestor::article[1]"
@@ -210,17 +212,31 @@ class ZakazkyGovScraper(BaseScraper):
             context_text = ""
             if await container.count():
                 context_text = self.clean_text(await container.inner_text())
+            if not context_text:
+                context_text = self.clean_text(await link.inner_text())
+
+            lines = [ln.strip() for ln in context_text.splitlines() if ln.strip()]
+            # Název bereme z první řádky, která nevypadá jen jako číslo zakázky
+            title = next((ln for ln in lines if not _ID_LINE_RE.match(ln) and len(ln) > 4), "")
+            if not title and lines:
+                title = lines[0]
+            if not title or len(title) < 5:
+                continue
+
+            # Zadavatel = první další řádka, co není číslo zakázky
+            authority = next(
+                (ln for ln in lines if ln != title and not _ID_LINE_RE.match(ln) and len(ln) > 2),
+                None,
+            )
+            external_id = next((ln for ln in lines if _ID_LINE_RE.match(ln)), None)
 
             published = self.value_after_label(
                 context_text,
                 ("Datum uveřejnění", "Datum zveřejnění", "Zveřejněno", "Uveřejněno"),
-            ) or self.first_date(context_text)
+            )
             deadline = self.value_after_label(
                 context_text,
                 ("Lhůta pro podání nabídek", "Lhůta", "Termín podání", "Konec lhůty"),
-            )
-            authority = self.value_after_text_label(
-                context_text, ("Zadavatel", "Název zadavatele")
             )
 
             tender = Tender(
@@ -230,10 +246,18 @@ class ZakazkyGovScraper(BaseScraper):
                 authority=authority,
                 published_at=published,
                 deadline_at=deadline,
+                external_id=external_id,
                 description=context_text or None,
             )
             if _is_foreign(tender):
                 continue
+
+            # Karta výsledků hledání datum obvykle neukazuje - doplníme ho
+            # z detailu zakázky, jinak by filtr na 14denní okno neplatil
+            # a do reportu by propadly i staré/neaktuální zakázky.
+            if not tender.published_at and not tender.deadline_at:
+                await self._enrich_from_detail(page, tender)
+
             tender.matched_keywords = [keyword]
             tenders.append(tender)
             if len(tenders) >= MAX_ROWS_PER_KEYWORD:
