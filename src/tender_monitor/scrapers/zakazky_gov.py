@@ -120,11 +120,16 @@ class ZakazkyGovScraper(BaseScraper):
         # Zachytíme JSON odpovědi, které portál vrací během vyhledávání -
         # obsahují data zakázek (včetně dat), spolehlivěji než vykreslený text.
         captured_json: list = []
+        all_urls: list = []  # jen pro diagnostiku - seznam URL požadavků
 
         async def _on_response(response) -> None:
             try:
-                if "zakazky.gov.cz" not in response.url:
+                url = response.url
+                # Datové požadavky poznáme podle přípony/cesty, ne podle domény
+                # (API může běžet na jiné subdoméně než zakazky.gov.cz).
+                if any(x in url for x in (".js", ".css", ".woff", ".svg", ".png", ".webp", ".ico")):
                     return
+                all_urls.append(url)
                 ctype = response.headers.get("content-type", "")
                 if "json" not in ctype.lower():
                     return
@@ -132,7 +137,7 @@ class ZakazkyGovScraper(BaseScraper):
                 # verze aplikace ({'hash': ...}) nás nezajímá
                 if isinstance(data, dict) and set(data.keys()) == {"hash"}:
                     return
-                captured_json.append((response.url, data))
+                captured_json.append((url, data))
             except Exception:
                 pass
 
@@ -201,16 +206,19 @@ class ZakazkyGovScraper(BaseScraper):
         # Datum z JSONu vyhledávacího API napárujeme na zakázky podle čísla (RVZ...)
         date_map = self._build_date_map(captured_json)
 
-        # Jednorázová diagnostika - ukážeme, co vyhledávací API vrací, ať víme,
+        # Jednorázová diagnostika - ukážeme, co síť během hledání vrací, ať víme,
         # kde jsou data uložená (pro případné doladění).
         if not date_map and not self._sample_logged:
             self._sample_logged = True
+            # 1) seznam URL požadavků (zkrácený) - hledáme, kde je datové API
+            url_list = " || ".join(u[:120] for u in all_urls[:40])
+            logger.info("Zakázky GOV DIAGNOSTIKA – URL požadavků (%s): %s", len(all_urls), url_list)
+            # 2) obsah zachycených JSON odpovědí (začátek každé)
             if captured_json:
-                u, d = captured_json[0]
-                logger.info("Zakázky GOV DIAGNOSTIKA hledání: %s JSON odpovědí. První %s: %s",
-                            len(captured_json), u, str(d)[:1000])
+                for i, (u, d) in enumerate(captured_json[:5]):
+                    logger.info("Zakázky GOV DIAGNOSTIKA – JSON #%s z %s: %s", i, u[:120], str(d)[:600])
             else:
-                logger.info("Zakázky GOV DIAGNOSTIKA hledání: žádná datová JSON odpověď se nezachytila")
+                logger.info("Zakázky GOV DIAGNOSTIKA – žádná datová JSON odpověď se nezachytila")
 
         try:
             return await self._extract_results(page, keyword, date_map)
