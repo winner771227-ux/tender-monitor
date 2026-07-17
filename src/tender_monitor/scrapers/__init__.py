@@ -12,6 +12,7 @@ from tender_monitor.scrapers.tender_market import TenderMarketScraper
 from tender_monitor.scrapers.vhodne_uverejneni import VhodneUverejneniScraper
 from tender_monitor.scrapers.portal_dodavatele import PortalDodavateleScraper
 from tender_monitor.scrapers.vvz import VvzScraper
+from tender_monitor.scrapers.zakazky_gov import ZakazkyGovScraper
 
 SCRAPER_CLASSES = (
     # ✅ FUNGUJE
@@ -25,6 +26,9 @@ SCRAPER_CLASSES = (
     # PortalDodavateleScraper,  # Portál Dodavatele – vyžaduje přihlášení, blokuje roboty
     # VhodneUverejneniScraper,  # Vhodné uveřejnění – timeout na GitHub Actions
     
+
+    # 🆕 NOVÝ - VYŽADUJE TEST před zařazením do ostrého běhu
+    ZakazkyGovScraper,     # Zakázky GOV – nový portál NIPEZ, SPA, selektory zatím neověřené naživo
 
     # ❌ DEAKTIVOVÁNO – nemají centrální vyhledávání nebo timeout
     # TenderArenaScraper,   # blokuje GitHub Actions IP
@@ -51,4 +55,5 @@ __all__ = [
     "VhodneUverejneniScraper",
     "PortalDodavateleScraper",
     "VvzScraper",
+    "ZakazkyGovScraper",
 ]
