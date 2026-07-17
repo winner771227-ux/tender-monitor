@@ -277,14 +277,29 @@ class ZakazkyGovScraper(BaseScraper):
                     keyword, len(links), len(date_map))
 
         seen_urls: set[str] = set()
+        seen_ids: set[str] = set()
         for link in links[: MAX_ROWS_PER_KEYWORD * 3]:
             href = await link.get_attribute("href")
             if not href:
+                continue
+            # Odkazy s ?view=compact obalují jen číslo zakázky (bez názvu)
+            # a tatáž zakázka je v seznamu ještě jednou s plným odkazem -
+            # compact verzi proto přeskočíme, jinak vznikají duplicity.
+            if "view=compact" in href:
                 continue
             url = self.absolute_url(page.url, href)
             if url in seen_urls:
                 continue
             seen_urls.add(url)
+
+            # Číslo zakázky z URL - slouží i k deduplikaci (stejná zakázka
+            # může mít v seznamu víc variant odkazu)
+            url_id = None
+            m = re.search(r"(RVZ\d{6,}|N\d{3}[/-]\d{2}[/-][A-Z]\d+)", url)
+            if m:
+                url_id = m.group(1)
+                if url_id in seen_ids:
+                    continue
 
             # Karta zakázky - zkusíme najít celý řádek/kartu (obsahuje víc
             # informací než jen samotný odkaz, který někdy obaluje pouze
@@ -302,9 +317,9 @@ class ZakazkyGovScraper(BaseScraper):
             lines = [ln.strip() for ln in context_text.splitlines() if ln.strip()]
             # Název bereme z první řádky, která nevypadá jen jako číslo zakázky
             title = next((ln for ln in lines if not _ID_LINE_RE.match(ln) and len(ln) > 4), "")
-            if not title and lines:
-                title = lines[0]
-            if not title or len(title) < 5:
+            # Bez skutečného názvu (jen číslo zakázky) záznam zahodíme -
+            # plnohodnotná verze téže zakázky je v seznamu taky.
+            if not title or len(title) < 5 or _ID_LINE_RE.match(title):
                 continue
 
             # Zadavatel = první další řádka, co není číslo zakázky
@@ -312,12 +327,7 @@ class ZakazkyGovScraper(BaseScraper):
                 (ln for ln in lines if ln != title and not _ID_LINE_RE.match(ln) and len(ln) > 2),
                 None,
             )
-            external_id = next((ln for ln in lines if _ID_LINE_RE.match(ln)), None)
-            # Číslo zakázky je i v URL (…/detail-zakazky/RVZ2600110661) - vytáhneme ho
-            if not external_id:
-                m = re.search(r"(RVZ\d{6,}|N\d{3}[/-]\d{2}[/-][A-Z]\d+)", url)
-                if m:
-                    external_id = m.group(1)
+            external_id = next((ln for ln in lines if _ID_LINE_RE.match(ln)), None) or url_id
 
             # Datum z karty (pokud tam náhodou je)
             published = self.value_after_label(context_text, _PUBLISHED_LABELS) or \
@@ -346,6 +356,8 @@ class ZakazkyGovScraper(BaseScraper):
 
             tender.matched_keywords = [keyword]
             tenders.append(tender)
+            if url_id:
+                seen_ids.add(url_id)
             if len(tenders) >= MAX_ROWS_PER_KEYWORD:
                 break
 
