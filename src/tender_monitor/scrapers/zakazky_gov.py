@@ -27,7 +27,7 @@ import re
 from playwright.async_api import Browser, Page
 
 from tender_monitor.models import ScrapeResult, Tender
-from tender_monitor.scrapers.base import BaseScraper, _is_foreign
+from tender_monitor.scrapers.base import DATE_RE, BaseScraper, _is_foreign
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +40,15 @@ _ID_LINE_RE = re.compile(r"^(RVZ\d{6,}|N\d{3}/\d{2}/[A-Z]\d+|[A-Z]{2,6}\d{4,})$"
 _DETAIL_LINK_SELECTOR = (
     "a[href*='/verejne-zakazky/'], a[href*='/zakazka/'], "
     "a[href*='/detail'], a[href*='/vz/']"
+)
+
+_PUBLISHED_LABELS = (
+    "Datum uveřejnění", "Datum zveřejnění", "Zveřejněno", "Uveřejněno",
+    "Datum zahájení", "Datum uveřejnění výzvy", "Zahájení řízení",
+)
+_DEADLINE_LABELS = (
+    "Lhůta pro podání nabídek", "Lhůta podání nabídek", "Konec lhůty",
+    "Termín podání", "Lhůta pro podání žádostí", "Konec lhůty pro podání nabídek",
 )
 
 
@@ -230,14 +239,10 @@ class ZakazkyGovScraper(BaseScraper):
             )
             external_id = next((ln for ln in lines if _ID_LINE_RE.match(ln)), None)
 
-            published = self.value_after_label(
-                context_text,
-                ("Datum uveřejnění", "Datum zveřejnění", "Zveřejněno", "Uveřejněno"),
-            )
-            deadline = self.value_after_label(
-                context_text,
-                ("Lhůta pro podání nabídek", "Lhůta", "Termín podání", "Konec lhůty"),
-            )
+            published = self.value_after_label(context_text, _PUBLISHED_LABELS) or \
+                self._fuzzy_date_after_label(context_text, _PUBLISHED_LABELS)
+            deadline = self.value_after_label(context_text, _DEADLINE_LABELS) or \
+                self._fuzzy_date_after_label(context_text, _DEADLINE_LABELS)
 
             tender = Tender(
                 source=self.source,
@@ -256,7 +261,7 @@ class ZakazkyGovScraper(BaseScraper):
             # z detailu zakázky, jinak by filtr na 14denní okno neplatil
             # a do reportu by propadly i staré/neaktuální zakázky.
             if not tender.published_at and not tender.deadline_at:
-                await self._enrich_from_detail(page, tender)
+                await self._enrich_zakazky_gov_detail(page, tender)
 
             tender.matched_keywords = [keyword]
             tenders.append(tender)
@@ -264,6 +269,69 @@ class ZakazkyGovScraper(BaseScraper):
                 break
 
         return self.deduplicate_tenders(tenders)
+
+    async def _enrich_zakazky_gov_detail(self, page: Page, tender: Tender) -> None:
+        """Doplní datum zveřejnění/lhůtu z detailu zakázky.
+
+        Na rozdíl od obecné BaseScraper._enrich_from_detail():
+        - otevírá novou záložku VE STEJNÉM kontextu (page.context.new_page()),
+          takže se zachovají cookies/session ze stránky, na které jsme spustili
+          vyhledávání - v novém "prázdném" kontextu portál někdy vrací jinou
+          (neúplnou) stránku,
+        - čeká na "networkidle", ne jen na to, že <body> existuje v DOM - u
+          Angular aplikace se obsah dopisuje až po doběhnutí JS požadavků,
+        - chybu loguje na úrovni INFO, aby byla vidět v GitHub Actions logu.
+        """
+        try:
+            detail = await page.context.new_page()
+        except Exception as exc:
+            logger.info("Zakázky GOV: nepodařilo se otevřít záložku pro detail (%s)", exc)
+            return
+
+        try:
+            await detail.goto(tender.url, wait_until="domcontentloaded", timeout=20_000)
+            try:
+                await detail.wait_for_load_state("networkidle", timeout=10_000)
+            except Exception:
+                pass
+            await detail.wait_for_timeout(1_500)
+
+            text = self.clean_text(await detail.locator("body").inner_text())
+            if not text:
+                logger.info("Zakázky GOV: detail %s se nevykreslil (prázdné tělo stránky)", tender.url)
+                return
+
+            if not tender.published_at:
+                tender.published_at = self.value_after_label(text, _PUBLISHED_LABELS) or \
+                    self._fuzzy_date_after_label(text, _PUBLISHED_LABELS)
+            if not tender.deadline_at:
+                tender.deadline_at = self.value_after_label(text, _DEADLINE_LABELS) or \
+                    self._fuzzy_date_after_label(text, _DEADLINE_LABELS)
+            if not tender.authority:
+                tender.authority = self.value_after_text_label(text, ("Zadavatel", "Název zadavatele"))
+            if not tender.description:
+                tender.description = text
+
+            if not tender.published_at and not tender.deadline_at:
+                logger.info("Zakázky GOV: v detailu %s se datum nenašlo", tender.url)
+        except Exception as exc:
+            logger.info("Zakázky GOV: chyba při čtení detailu %s (%s)", tender.url, exc)
+        finally:
+            await detail.close()
+
+    @staticmethod
+    def _fuzzy_date_after_label(text: str, labels: tuple[str, ...]) -> str | None:
+        """Najde datum do 40 znaků za popiskem, i když mezi nimi je další text
+        (např. "Datum uveřejnění výzvy do systému: 15. 7. 2026")."""
+        for label in labels:
+            pattern = re.compile(
+                rf"{re.escape(label)}.{{0,40}}?({DATE_RE.pattern})",
+                re.IGNORECASE | re.DOTALL,
+            )
+            match = pattern.search(text)
+            if match:
+                return BaseScraper.first_date(match.group(1))
+        return None
 
     async def scrape_page(self, page: Page) -> list[Tender]:
         # Nepoužívá se – veškerá logika je v scrape()/_search_keyword(), protože
