@@ -39,6 +39,8 @@ MAX_ROWS_PER_KEYWORD = 12
 # názvosloví, např. podle standardu OCDS)
 _PUBLISHED_JSON_KEYS = (
     "uverejn", "zverejn", "zahajeni", "publikov", "publish", "datepublished", "startdate",
+    "datumvyhlaseni", "vyhlaseni", "datumzahajeni", "datumpublikace", "created", "vlozeni",
+    "datumzadani", "zadani",
 )
 _DEADLINE_JSON_KEYS = (
     "lhuta", "koneclhuty", "terminpodani", "deadline", "enddate", "submissiondeadline",
@@ -78,6 +80,7 @@ class ZakazkyGovScraper(BaseScraper):
         # Ať do logu vypíšeme ukázku skutečných dat jen jednou za běh, ne
         # pro každou jednotlivou zakázku (log by byl nečitelný).
         self._sample_logged = False
+        self._keys_logged = False
 
     async def scrape(self, browser: Browser) -> ScrapeResult:
         context = await browser.new_context(
@@ -205,6 +208,14 @@ class ZakazkyGovScraper(BaseScraper):
 
         # Datum z JSONu vyhledávacího API napárujeme na zakázky podle čísla (RVZ...)
         date_map = self._build_date_map(captured_json)
+
+        # Jednorázová diagnostika názvů polí v API - ať víme, jak se jmenuje
+        # datum zveřejnění (published), které se zatím nedaří napárovat.
+        if not self._keys_logged:
+            self._keys_logged = True
+            sample_keys = self._sample_record_keys(captured_json)
+            if sample_keys:
+                logger.info("Zakázky GOV DIAGNOSTIKA – klíče záznamu zakázky v API: %s", sample_keys)
 
         # Jednorázová diagnostika - ukážeme, co síť během hledání vrací, ať víme,
         # kde jsou data uložená (pro případné doladění).
@@ -339,6 +350,33 @@ class ZakazkyGovScraper(BaseScraper):
                 break
 
         return self.deduplicate_tenders(tenders)
+
+    @classmethod
+    def _sample_record_keys(cls, captured_json: list) -> str | None:
+        """Najde v API první objekt, který vypadá jako záznam zakázky
+        (obsahuje číslo RVZ…), a vrátí seznam jeho klíčů. Slouží jen k tomu,
+        abychom v logu jednou viděli, jak se pole (hlavně datum) jmenují."""
+        found: list[str] = []
+
+        def _walk(obj, depth=0):
+            if found or depth > 8:
+                return
+            if isinstance(obj, dict):
+                for v in obj.values():
+                    if isinstance(v, str) and re.search(r"RVZ\d{6,}", v):
+                        found.extend(obj.keys())
+                        return
+                for v in obj.values():
+                    _walk(v, depth + 1)
+            elif isinstance(obj, list):
+                for item in obj:
+                    _walk(item, depth + 1)
+
+        for _url, data in captured_json:
+            _walk(data)
+            if found:
+                break
+        return ", ".join(found) if found else None
 
     @classmethod
     def _build_date_map(cls, captured_json: list) -> dict:

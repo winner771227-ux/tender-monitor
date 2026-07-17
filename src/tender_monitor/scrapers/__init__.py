@@ -27,8 +27,8 @@ SCRAPER_CLASSES = (
     # VhodneUverejneniScraper,  # Vhodné uveřejnění – timeout na GitHub Actions
     
 
-    # 🆕 NOVÝ - VYŽADUJE TEST před zařazením do ostrého běhu
-    ZakazkyGovScraper,     # Zakázky GOV – nový portál NIPEZ, SPA, selektory zatím neověřené naživo
+    # 🆕 NOVÝ - otestováno, vrací zakázky s lhůtou z API, filtr funguje
+    ZakazkyGovScraper,     # Zakázky GOV – nový centrální portál NIPEZ (zakazky.gov.cz)
 
     # ❌ DEAKTIVOVÁNO – nemají centrální vyhledávání nebo timeout
     # TenderArenaScraper,   # blokuje GitHub Actions IP
