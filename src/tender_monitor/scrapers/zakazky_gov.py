@@ -41,7 +41,11 @@ _DETAIL_LINK_SELECTOR = (
 
 class ZakazkyGovScraper(BaseScraper):
     source = "Zakázky GOV"
-    url = "https://zakazky.gov.cz/verejne-zakazky"
+    # Z logu prvního běhu: na /verejne-zakazky Playwright narazil na SKRYTOU
+    # kopii vyhledávacího pole (stejný placeholder existuje 2× v DOM – zřejmě
+    # kvůli responzivnímu layoutu). Startujeme proto z úvodní stránky, kde je
+    # velké vyhledávací pole vidět rovnou bez jakékoli interakce.
+    url = "https://zakazky.gov.cz/"
     max_pages = 1
     per_keyword_timeout_ms = 45_000
 
@@ -52,6 +56,7 @@ class ZakazkyGovScraper(BaseScraper):
                 "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
             ),
             locale="cs-CZ",
+            viewport={"width": 1440, "height": 900},
         )
         page = await context.new_page()
         page.set_default_timeout(self.per_keyword_timeout_ms)
@@ -84,44 +89,54 @@ class ZakazkyGovScraper(BaseScraper):
     async def _search_keyword(self, page: Page, keyword: str) -> list[Tender]:
         await page.goto(self.url, wait_until="domcontentloaded", timeout=self.per_keyword_timeout_ms)
         # necháme JS aplikaci "nastartovat" a stáhnout data
-        await page.wait_for_timeout(3_000)
-
-        # Přepneme na fulltextové vyhledávání (výchozí je "Chytré AI vyhledávání")
         try:
-            fulltext_switch = page.get_by_text("Fulltextové vyhledávání", exact=False).first
-            if await fulltext_switch.count():
+            await page.wait_for_load_state("networkidle", timeout=10_000)
+        except Exception:
+            pass
+        await page.wait_for_timeout(1_500)
+        await self._dismiss_cookie_banner(page)
+
+        # Přepneme na fulltextové vyhledávání (výchozí je "Chytré AI vyhledávání").
+        # Pokud viditelný přepínač nenajdeme, pokračujeme i tak - fulltext bývá
+        # výchozí chování při psaní přesné fráze.
+        fulltext_switch = await self._first_visible(
+            page.get_by_text("Fulltextové vyhledávání", exact=False)
+        )
+        if fulltext_switch is not None:
+            try:
                 await fulltext_switch.click(timeout=5_000)
                 await page.wait_for_timeout(500)
-        except Exception:
-            logger.debug("Zakázky GOV: přepínač 'Fulltextové vyhledávání' nenalezen")
+            except Exception:
+                logger.debug("Zakázky GOV: klik na přepínač 'Fulltextové vyhledávání' selhal")
+        else:
+            logger.debug("Zakázky GOV: viditelný přepínač 'Fulltextové vyhledávání' nenalezen")
 
-        # Najdeme vyhledávací pole - zkusíme víc variant podle typu/placeholderu
-        search_box = None
-        for locator_fn in (
-            lambda: page.get_by_placeholder("Zeptejte se Zakázek GOV", exact=False),
-            lambda: page.locator("input[type='search']"),
-            lambda: page.locator("input[type='text']"),
-        ):
-            candidate = locator_fn().first
-            if await candidate.count():
-                search_box = candidate
-                break
-
+        # Najdeme VIDITELNÉ vyhledávací pole (log z prvního běhu ukázal, že na
+        # stránce existuje i skrytá kopie se stejným placeholderem, proto tady
+        # výslovně filtrujeme na is_visible()).
+        search_box = await self._first_visible(
+            page.get_by_placeholder("Zeptejte se Zakázek GOV", exact=False)
+        )
         if search_box is None:
-            raise RuntimeError("vyhledávací pole na stránce nenalezeno")
+            search_box = await self._first_visible(page.locator("input[type='search']"))
+        if search_box is None:
+            search_box = await self._first_visible(page.locator("input[type='text']"))
+        if search_box is None:
+            raise RuntimeError("viditelné vyhledávací pole na stránce nenalezeno")
 
-        await search_box.click()
+        await search_box.scroll_into_view_if_needed()
+        await search_box.click(timeout=8_000)
         await search_box.fill(keyword)
 
         # Odešleme hledání - přednostně tlačítkem "Hledat zakázku", jinak Enter
         clicked = False
-        try:
-            search_btn = page.get_by_role("button", name="Hledat zakázku")
-            if await search_btn.count():
+        search_btn = await self._first_visible(page.get_by_role("button", name="Hledat zakázku"))
+        if search_btn is not None:
+            try:
                 await search_btn.click(timeout=5_000)
                 clicked = True
-        except Exception:
-            pass
+            except Exception:
+                pass
         if not clicked:
             await search_box.press("Enter")
 
@@ -133,6 +148,40 @@ class ZakazkyGovScraper(BaseScraper):
             pass
 
         return await self._extract_results(page, keyword)
+
+    @staticmethod
+    async def _first_visible(locator):
+        """Vrátí první VIDITELNOU shodu z locatoru, nebo None.
+
+        Nutné proto, že stránka umí mít stejný prvek (např. vyhledávací pole)
+        vykreslený vícekrát – jednu viditelnou verzi a jednu skrytou (typicky
+        kvůli responzivnímu layoutu) – a obyčejné `.first` může trefit tu
+        skrytou, na kterou pak Playwright nikdy nedokáže kliknout.
+        """
+        try:
+            count = await locator.count()
+        except Exception:
+            return None
+        for i in range(count):
+            candidate = locator.nth(i)
+            try:
+                if await candidate.is_visible():
+                    return candidate
+            except Exception:
+                continue
+        return None
+
+    @staticmethod
+    async def _dismiss_cookie_banner(page: Page) -> None:
+        for text in ("Souhlasím", "Přijmout", "Rozumím", "Povolit vše", "Přijmout vše"):
+            try:
+                btn = page.get_by_role("button", name=text)
+                if await btn.count() and await btn.first.is_visible():
+                    await btn.first.click(timeout=2_000)
+                    await page.wait_for_timeout(300)
+                    return
+            except Exception:
+                continue
 
     async def _extract_results(self, page: Page, keyword: str) -> list[Tender]:
         tenders: list[Tender] = []
