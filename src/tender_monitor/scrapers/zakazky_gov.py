@@ -32,7 +32,7 @@ from tender_monitor.scrapers.base import DATE_RE, BaseScraper, _is_foreign
 
 logger = logging.getLogger(__name__)
 
-MAX_ROWS_PER_KEYWORD = 8
+MAX_ROWS_PER_KEYWORD = 12
 
 # Klíče v JSON odpovědi API, které pravděpodobně obsahují datum zveřejnění / lhůtu
 # (zkoušíme české i anglické varianty - moderní portál mohl převzít mezinárodní
@@ -41,7 +41,7 @@ _PUBLISHED_JSON_KEYS = (
     "uverejn", "zverejn", "zahajeni", "publikov", "publish", "datepublished", "startdate",
 )
 _DEADLINE_JSON_KEYS = (
-    "lhutapodani", "koneclhuty", "terminpodani", "deadline", "enddate", "submissiondeadline",
+    "lhuta", "koneclhuty", "terminpodani", "deadline", "enddate", "submissiondeadline",
 )
 
 # Řádek s číslem zakázky vypadá typicky jako "RVZ2600110661" nebo "N006/25/V..."
@@ -117,6 +117,27 @@ class ZakazkyGovScraper(BaseScraper):
         )
 
     async def _search_keyword(self, page: Page, keyword: str) -> list[Tender]:
+        # Zachytíme JSON odpovědi, které portál vrací během vyhledávání -
+        # obsahují data zakázek (včetně dat), spolehlivěji než vykreslený text.
+        captured_json: list = []
+
+        async def _on_response(response) -> None:
+            try:
+                if "zakazky.gov.cz" not in response.url:
+                    return
+                ctype = response.headers.get("content-type", "")
+                if "json" not in ctype.lower():
+                    return
+                data = await response.json()
+                # verze aplikace ({'hash': ...}) nás nezajímá
+                if isinstance(data, dict) and set(data.keys()) == {"hash"}:
+                    return
+                captured_json.append((response.url, data))
+            except Exception:
+                pass
+
+        page.on("response", _on_response)
+
         await page.goto(self.url, wait_until="domcontentloaded", timeout=self.per_keyword_timeout_ms)
         # necháme JS aplikaci "nastartovat" a stáhnout data
         try:
@@ -177,7 +198,24 @@ class ZakazkyGovScraper(BaseScraper):
         except Exception:
             pass
 
-        return await self._extract_results(page, keyword)
+        # Datum z JSONu vyhledávacího API napárujeme na zakázky podle čísla (RVZ...)
+        date_map = self._build_date_map(captured_json)
+
+        # Jednorázová diagnostika - ukážeme, co vyhledávací API vrací, ať víme,
+        # kde jsou data uložená (pro případné doladění).
+        if not date_map and not self._sample_logged:
+            self._sample_logged = True
+            if captured_json:
+                u, d = captured_json[0]
+                logger.info("Zakázky GOV DIAGNOSTIKA hledání: %s JSON odpovědí. První %s: %s",
+                            len(captured_json), u, str(d)[:1000])
+            else:
+                logger.info("Zakázky GOV DIAGNOSTIKA hledání: žádná datová JSON odpověď se nezachytila")
+
+        try:
+            return await self._extract_results(page, keyword, date_map)
+        finally:
+            page.remove_listener("response", _on_response)
 
     @staticmethod
     async def _first_visible(locator):
@@ -213,10 +251,11 @@ class ZakazkyGovScraper(BaseScraper):
             except Exception:
                 continue
 
-    async def _extract_results(self, page: Page, keyword: str) -> list[Tender]:
+    async def _extract_results(self, page: Page, keyword: str, date_map: dict) -> list[Tender]:
         tenders: list[Tender] = []
         links = await page.locator(_DETAIL_LINK_SELECTOR).all()
-        logger.info("Zakázky GOV [%s]: nalezeno odkazů=%s", keyword, len(links))
+        logger.info("Zakázky GOV [%s]: nalezeno odkazů=%s (dat z API=%s)",
+                    keyword, len(links), len(date_map))
 
         seen_urls: set[str] = set()
         for link in links[: MAX_ROWS_PER_KEYWORD * 3]:
@@ -255,11 +294,23 @@ class ZakazkyGovScraper(BaseScraper):
                 None,
             )
             external_id = next((ln for ln in lines if _ID_LINE_RE.match(ln)), None)
+            # Číslo zakázky je i v URL (…/detail-zakazky/RVZ2600110661) - vytáhneme ho
+            if not external_id:
+                m = re.search(r"(RVZ\d{6,}|N\d{3}[/-]\d{2}[/-][A-Z]\d+)", url)
+                if m:
+                    external_id = m.group(1)
 
+            # Datum z karty (pokud tam náhodou je)
             published = self.value_after_label(context_text, _PUBLISHED_LABELS) or \
                 self._fuzzy_date_after_label(context_text, _PUBLISHED_LABELS)
             deadline = self.value_after_label(context_text, _DEADLINE_LABELS) or \
                 self._fuzzy_date_after_label(context_text, _DEADLINE_LABELS)
+
+            # Datum z JSON odpovědi vyhledávacího API (napárováno podle čísla zakázky)
+            if external_id and external_id in date_map:
+                api_pub, api_dl = date_map[external_id]
+                published = published or api_pub
+                deadline = deadline or api_dl
 
             tender = Tender(
                 source=self.source,
@@ -274,12 +325,6 @@ class ZakazkyGovScraper(BaseScraper):
             if _is_foreign(tender):
                 continue
 
-            # Karta výsledků hledání datum obvykle neukazuje - doplníme ho
-            # z detailu zakázky, jinak by filtr na 14denní okno neplatil
-            # a do reportu by propadly i staré/neaktuální zakázky.
-            if not tender.published_at and not tender.deadline_at:
-                await self._enrich_zakazky_gov_detail(page, tender)
-
             tender.matched_keywords = [keyword]
             tenders.append(tender)
             if len(tenders) >= MAX_ROWS_PER_KEYWORD:
@@ -287,104 +332,45 @@ class ZakazkyGovScraper(BaseScraper):
 
         return self.deduplicate_tenders(tenders)
 
-    async def _enrich_zakazky_gov_detail(self, page: Page, tender: Tender) -> None:
-        """Doplní datum zveřejnění/lhůtu z detailu zakázky.
+    @classmethod
+    def _build_date_map(cls, captured_json: list) -> dict:
+        """Z JSON odpovědí vyhledávacího API sestaví mapu:
+        číslo_zakázky (RVZ…) -> (datum_zveřejnění, lhůta_podání).
 
-        Postup (od nejspolehlivějšího k nejméně spolehlivému):
-        1. Zachytíme JSON odpovědi, které si stránka na pozadí natáhne z API
-           (modernější a spolehlivější než parsování vykresleného textu).
-        2. Pokud to nevyjde, zkusíme to z vykresleného textu podle známých
-           popisků ("Datum uveřejnění" apod.).
-        3. Pokud nevyjde ani to, JEDNOU za běh vypíšeme do logu ukázku
-           skutečného textu kolem slov lhůta/uveřejnění – aby bylo příště
-           jasné, jak přesně portál datum píše, místo dalšího hádání.
-
-        Otevíráme novou záložku VE STEJNÉM kontextu (page.context.new_page()),
-        aby zůstaly zachované cookies/session ze stránky, na které jsme
-        spustili vyhledávání.
+        Nezná přesnou strukturu API předem, proto rekurzivně hledá objekty,
+        které mají zároveň něco jako číslo zakázky (RVZ…) a nějaké datum.
         """
-        try:
-            detail = await page.context.new_page()
-        except Exception as exc:
-            logger.info("Zakázky GOV: nepodařilo se otevřít záložku pro detail (%s)", exc)
+        date_map: dict = {}
+        for _url, data in captured_json:
+            cls._harvest_records(data, date_map)
+        return date_map
+
+    @classmethod
+    def _harvest_records(cls, obj, date_map: dict, _depth: int = 0) -> None:
+        if _depth > 8:
             return
-
-        captured_json: list[dict] = []
-
-        async def _on_response(response) -> None:
-            try:
-                if "zakazky.gov.cz" not in response.url:
-                    return
-                ctype = response.headers.get("content-type", "")
-                if "json" not in ctype.lower():
-                    return
-                data = await response.json()
-                captured_json.append(data)
-            except Exception:
-                pass
-
-        detail.on("response", _on_response)
-
-        try:
-            await detail.goto(tender.url, wait_until="domcontentloaded", timeout=20_000)
-
-            # Krátce počkáme a průběžně zkoušíme, jestli se v zachycených
-            # JSON odpovědích objevilo datum - jakmile ano, nemusíme čekat dál.
-            published_json = deadline_json = None
-            for _ in range(10):  # max ~5 s
-                for data in captured_json:
-                    if published_json is None:
-                        published_json = self._find_date_value(data, _PUBLISHED_JSON_KEYS)
-                    if deadline_json is None:
-                        deadline_json = self._find_date_value(data, _DEADLINE_JSON_KEYS)
-                if published_json or deadline_json:
-                    break
-                await detail.wait_for_timeout(500)
-
-            if published_json and not tender.published_at:
-                tender.published_at = self.first_date(published_json)
-            if deadline_json and not tender.deadline_at:
-                tender.deadline_at = self.first_date(deadline_json)
-
-            # Pokud JSON nepomohl, zkusíme to ještě z vykresleného textu
-            text = ""
-            if not tender.published_at or not tender.deadline_at:
-                try:
-                    await detail.wait_for_load_state("networkidle", timeout=8_000)
-                except Exception:
-                    pass
-                text = self.clean_text(await detail.locator("body").inner_text())
-                if text:
-                    if not tender.published_at:
-                        tender.published_at = self.value_after_label(text, _PUBLISHED_LABELS) or \
-                            self._fuzzy_date_after_label(text, _PUBLISHED_LABELS)
-                    if not tender.deadline_at:
-                        tender.deadline_at = self.value_after_label(text, _DEADLINE_LABELS) or \
-                            self._fuzzy_date_after_label(text, _DEADLINE_LABELS)
-                    if not tender.authority:
-                        tender.authority = self.value_after_text_label(text, ("Zadavatel", "Název zadavatele"))
-                    if not tender.description:
-                        tender.description = text
-
-            if not tender.published_at and not tender.deadline_at and not self._sample_logged:
-                self._sample_logged = True
-                if captured_json:
-                    sample = str(captured_json[0])[:800]
-                    logger.info(
-                        "Zakázky GOV DIAGNOSTIKA – zachyceno %s JSON odpovědí, ukázka první z %s: %s",
-                        len(captured_json), tender.url, sample,
+        if isinstance(obj, dict):
+            # Najdeme v tomto objektu číslo zakázky
+            ext_id = None
+            for k, v in obj.items():
+                if isinstance(v, str):
+                    m = re.search(r"(RVZ\d{6,}|N\d{3}[/-]\d{2}[/-][A-Z]\d+)", v)
+                    if m:
+                        ext_id = m.group(1)
+                        break
+            if ext_id:
+                published = cls._find_date_value(obj, _PUBLISHED_JSON_KEYS)
+                deadline = cls._find_date_value(obj, _DEADLINE_JSON_KEYS)
+                if (published or deadline) and ext_id not in date_map:
+                    date_map[ext_id] = (
+                        BaseScraper.first_date(published) if published else None,
+                        BaseScraper.first_date(deadline) if deadline else None,
                     )
-                else:
-                    logger.info(
-                        "Zakázky GOV DIAGNOSTIKA – žádná JSON odpověď se nezachytila pro %s", tender.url,
-                    )
-                if text:
-                    snippet = self._context_snippet(text, ("lhůt", "uveřejn", "zveřejn", "zahájen", "termín"))
-                    logger.info("Zakázky GOV DIAGNOSTIKA – text kolem klíčových slov: %s", snippet)
-        except Exception as exc:
-            logger.info("Zakázky GOV: chyba při čtení detailu %s (%s)", tender.url, exc)
-        finally:
-            await detail.close()
+            for v in obj.values():
+                cls._harvest_records(v, date_map, _depth + 1)
+        elif isinstance(obj, list):
+            for item in obj:
+                cls._harvest_records(item, date_map, _depth + 1)
 
     @staticmethod
     def _find_date_value(obj, key_substrings: tuple[str, ...], _depth: int = 0) -> str | None:
@@ -407,17 +393,6 @@ class ZakazkyGovScraper(BaseScraper):
                 if found:
                     return found
         return None
-
-    @staticmethod
-    def _context_snippet(text: str, needles: tuple[str, ...]) -> str:
-        norm = text.lower()
-        for needle in needles:
-            idx = norm.find(needle.lower())
-            if idx != -1:
-                start = max(0, idx - 40)
-                end = min(len(text), idx + 150)
-                return text[start:end].replace("\n", " | ")
-        return "(slova 'lhůta/uveřejnění/zveřejnění/zahájení/termín' se v textu detailu nenašla)"
 
     @staticmethod
     def _fuzzy_date_after_label(text: str, labels: tuple[str, ...]) -> str | None:
