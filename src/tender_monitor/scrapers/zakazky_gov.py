@@ -1,86 +1,82 @@
-"""Scraper pro Zakázky GOV – nový centrální portál NIPEZ (zakazky.gov.cz).
+"""Scraper pro Zakázky GOV – centrální portál NIPEZ (zakazky.gov.cz).
 
-Portál je moderní SPA (obsah se vykresluje až po spuštění JavaScriptu,
-stažené HTML je prázdná "kostra"), takže tabulku/karty zakázek nejde
-najít staticky – musíme přes Playwright:
-  1. otevřít https://zakazky.gov.cz/verejne-zakazky
-  2. přepnout na "Fulltextové vyhledávání" (ne AI vyhledávání)
-  3. pro každé klíčové slovo zvlášť vyplnit vyhledávací pole a odeslat
-     (stejný princip jako u NEN – portál neumožňuje hledání přes URL parametr)
-  4. počkat na vykreslení výsledků a vytáhnout odkazy na detail + okolní text
+VERZE 2 – přímé volání API (bez klikání v prohlížeči).
 
-POZOR – toto je PRVNÍ verze scraperu:
-Selektory jsou postavené na viditelném textu stránky (placeholder pole,
-text tlačítka, text přepínače), protože skutečnou strukturu vykresleného
-DOM nešlo předem ověřit (portál běží na JS frameworku, statické stažení
-stránky vrátí jen prázdnou kostru). Po prvním běhu je potřeba zkontrolovat
-log v GitHub Actions (Actions → run → job log, hledej řádky "Zakázky GOV")
-a podle toho selektory doladit – stejně jako u ostatních portálů v tomto
-projektu (NEN, eVeZa apod. procházely stejným laděním).
+Z prvního běhu (UI scraping) a následné analýzy sítě portálu víme:
+  * Vyhledávání volá POST https://api.isd.nipez.cz/isd/seznam/zakazek/hlavni-seznam
+    s tělem: {"filtr": {"klicova_slova": ["demolice"], "skupinaZakazek": "VSE"},
+              "strankovani": {"stranka": 1, "pocet_zaznamu": N},
+              "razeni": {"atribut": "DATUM_UVEREJNENI_NA_ZAKAZKY_GOV",
+                         "typ_razeni": "SESTUPNE"}}
+    Odpověď: {"polozky": [...], "posledni_stranka": bool}. Záznam obsahuje
+    identifikator_NIPEZ, nazev_verejne_zakazky, nazev_zadavatele,
+    popis_predmetu, lhuta_pro_podani (ISO), stav, typ_zadavaciho_postupu.
+    POZOR: datum uveřejnění v odpovědi NENÍ (proto v 1. verzi chybělo).
+  * Datum uveřejnění vrací detail zakázky:
+    GET https://api.isd.nipez.cz/isd/detail/zakazky/verejna-zakazka/{id}
+    v poli "uverejneniNaZakazkyGov" (ISO, např. "2026-07-17T06:47:51.85Z").
+  * Webový detail pro uživatele:
+    https://zakazky.gov.cz/verejne-zakazky/detail-zakazky/{id}
+  * Předpokládaná hodnota zakázky: v detailu je pole
+    "predpokladana_hodnota_bude_uverejnena" (bool) - u obou ověřených vzorků
+    (RVZ2600110843, RVZ2600108692) bylo FALSE, tedy zadavatel hodnotu
+    nezveřejnil (běžná praxe u českých veřejných zakázek, není chyba
+    scraperu). Pokud je TRUE, přesnou strukturu čísla jsme naživo neověřili
+    (nebyl po ruce vzorek) - scraper proto hodnotu hledá obecně, podle
+    libovolného klíče obsahujícího "hodnota" s číselnou částkou, a když ji
+    nenajde, aspoň doplní kategorii "typ_verejne_zakazky_dle_vyse_
+    predpokladane_hodnoty" (nadlimitní/podlimitní/malého rozsahu) do popisu -
+    at je z karty v CRM aspoň vidět řádová velikost zakázky.
+
+Řazení SESTUPNE podle data uveřejnění znamená, že bereme nejnovější zakázky,
+což přesně odpovídá 14dennímu filtru v BaseScraper._filter().
 """
 from __future__ import annotations
 
 import asyncio
 import logging
-import re
 
-from playwright.async_api import Browser, Page
+from playwright.async_api import APIRequestContext, Browser, Page
 
-from tender_monitor.dedupe import normalize_text
 from tender_monitor.models import ScrapeResult, Tender
-from tender_monitor.scrapers.base import DATE_RE, BaseScraper, _is_foreign
+from tender_monitor.scrapers.base import BaseScraper, _is_foreign
 
 logger = logging.getLogger(__name__)
 
 MAX_ROWS_PER_KEYWORD = 12
+MAX_DESCRIPTION_CHARS = 800
 
-# Klíče v JSON odpovědi API, které pravděpodobně obsahují datum zveřejnění / lhůtu
-# (zkoušíme české i anglické varianty - moderní portál mohl převzít mezinárodní
-# názvosloví, např. podle standardu OCDS)
-_PUBLISHED_JSON_KEYS = (
-    "uverejn", "zverejn", "zahajeni", "publikov", "publish", "datepublished", "startdate",
-    "datumvyhlaseni", "vyhlaseni", "datumzahajeni", "datumpublikace", "created", "vlozeni",
-    "datumzadani", "zadani",
-)
-_DEADLINE_JSON_KEYS = (
-    "lhuta", "koneclhuty", "terminpodani", "deadline", "enddate", "submissiondeadline",
-)
+API_SEARCH_URL = "https://api.isd.nipez.cz/isd/seznam/zakazek/hlavni-seznam"
+API_DETAIL_URL = "https://api.isd.nipez.cz/isd/detail/zakazky/verejna-zakazka/{id}"
+WEB_DETAIL_URL = "https://zakazky.gov.cz/verejne-zakazky/detail-zakazky/{id}"
 
-# Řádek s číslem zakázky vypadá typicky jako "RVZ2600110661" nebo "N006/25/V..."
-_ID_LINE_RE = re.compile(r"^(RVZ\d{6,}|N\d{3}/\d{2}/[A-Z]\d+|[A-Z]{2,6}\d{4,})$")
+# Reportujeme jen aktivní zakázky. Pozorované stavy v API: AKTIVNI_NEUKONCEN,
+# DOKONCEN_ZADAN, UKONCENO_PLNENI_SMLOUVY - POZOR, "AKTIVNI_NEUKONCEN" obsahuje
+# substring "UKONCEN", proto se testuje prefix "AKTIVNI", ne substring.
 
-# Odkaz na detail zakázky - zkoušíme víc obvyklých vzorů URL najednou
-_DETAIL_LINK_SELECTOR = (
-    "a[href*='/verejne-zakazky/'], a[href*='/zakazka/'], "
-    "a[href*='/detail'], a[href*='/vz/']"
-)
+# Čitelné popisky kategorie zakázky dle výše předpokládané hodnoty (fallback,
+# když portál přesnou částku nezveřejní).
+_KATEGORIE_HODNOTY = {
+    "NADLIMITNI_VEREJNA_ZAKAZKA": "nadlimitní veřejná zakázka",
+    "PODLIMITNI_VEREJNA_ZAKAZKA": "podlimitní veřejná zakázka",
+    "VEREJNA_ZAKAZKA_MALEHO_ROZSAHU": "veřejná zakázka malého rozsahu",
+}
 
-_PUBLISHED_LABELS = (
-    "Datum uveřejnění", "Datum zveřejnění", "Zveřejněno", "Uveřejněno",
-    "Datum zahájení", "Datum uveřejnění výzvy", "Zahájení řízení",
-)
-_DEADLINE_LABELS = (
-    "Lhůta pro podání nabídek", "Lhůta podání nabídek", "Konec lhůty",
-    "Termín podání", "Lhůta pro podání žádostí", "Konec lhůty pro podání nabídek",
-)
+# Klíče v detailu zakázky, které jsou o hodnotě, ale NEJSOU číslo v Kč
+# (booleovský příznak "bude zveřejněna" apod.) - vylučujeme je z hledání čísla.
+_HODNOTA_KEY_EXCLUDE = ("bude_uverejnena", "bude_zverejnena")
 
 
 class ZakazkyGovScraper(BaseScraper):
     source = "Zakázky GOV"
-    # Z logu prvního běhu: na /verejne-zakazky Playwright narazil na SKRYTOU
-    # kopii vyhledávacího pole (stejný placeholder existuje 2× v DOM – zřejmě
-    # kvůli responzivnímu layoutu). Startujeme proto z úvodní stránky, kde je
-    # velké vyhledávací pole vidět rovnou bez jakékoli interakce.
     url = "https://zakazky.gov.cz/"
-    max_pages = 1
-    per_keyword_timeout_ms = 45_000
+    request_timeout_ms = 30_000
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        # Ať do logu vypíšeme ukázku skutečných dat jen jednou za běh, ne
-        # pro každou jednotlivou zakázku (log by byl nečitelný).
-        self._sample_logged = False
-        self._keys_logged = False
+        # Cache detailů: stejná zakázka se objevuje pod více klíčovými slovy,
+        # detail stahujeme jen jednou za běh. Hodnoty: (published, hodnota_radek).
+        self._detail_cache: dict[str, tuple[str | None, str | None]] = {}
 
     async def scrape(self, browser: Browser) -> ScrapeResult:
         context = await browser.new_context(
@@ -89,23 +85,21 @@ class ZakazkyGovScraper(BaseScraper):
                 "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
             ),
             locale="cs-CZ",
-            viewport={"width": 1440, "height": 900},
         )
-        page = await context.new_page()
-        page.set_default_timeout(self.per_keyword_timeout_ms)
         all_tenders: list[Tender] = []
         error_msg: str | None = None
 
         try:
+            request = context.request
             for keyword in self.keywords:
                 try:
-                    found = await self._search_keyword(page, keyword)
+                    found = await self._search_keyword(request, keyword)
                     logger.info("Zakázky GOV [%s]: nalezeno=%s", keyword, len(found))
                     all_tenders.extend(found)
                 except Exception as exc:
                     logger.warning("Zakázky GOV keyword='%s' chyba: %s", keyword, exc)
                     error_msg = str(exc)
-                await asyncio.sleep(1)
+                await asyncio.sleep(0.5)
         finally:
             await context.close()
 
@@ -119,354 +113,160 @@ class ZakazkyGovScraper(BaseScraper):
             error=error_msg if not all_tenders else None,
         )
 
-    async def _search_keyword(self, page: Page, keyword: str) -> list[Tender]:
-        # Zachytíme JSON odpovědi, které portál vrací během vyhledávání -
-        # obsahují data zakázek (včetně dat), spolehlivěji než vykreslený text.
-        captured_json: list = []
-        all_urls: list = []  # jen pro diagnostiku - seznam URL požadavků
-
-        async def _on_response(response) -> None:
-            try:
-                url = response.url
-                # Datové požadavky poznáme podle přípony/cesty, ne podle domény
-                # (API může běžet na jiné subdoméně než zakazky.gov.cz).
-                if any(x in url for x in (".js", ".css", ".woff", ".svg", ".png", ".webp", ".ico")):
-                    return
-                all_urls.append(url)
-                ctype = response.headers.get("content-type", "")
-                if "json" not in ctype.lower():
-                    return
-                data = await response.json()
-                # verze aplikace ({'hash': ...}) nás nezajímá
-                if isinstance(data, dict) and set(data.keys()) == {"hash"}:
-                    return
-                captured_json.append((url, data))
-            except Exception:
-                pass
-
-        page.on("response", _on_response)
-
-        await page.goto(self.url, wait_until="domcontentloaded", timeout=self.per_keyword_timeout_ms)
-        # necháme JS aplikaci "nastartovat" a stáhnout data
-        try:
-            await page.wait_for_load_state("networkidle", timeout=10_000)
-        except Exception:
-            pass
-        await page.wait_for_timeout(1_500)
-        await self._dismiss_cookie_banner(page)
-
-        # Přepneme na fulltextové vyhledávání (výchozí je "Chytré AI vyhledávání").
-        # Pokud viditelný přepínač nenajdeme, pokračujeme i tak - fulltext bývá
-        # výchozí chování při psaní přesné fráze.
-        fulltext_switch = await self._first_visible(
-            page.get_by_text("Fulltextové vyhledávání", exact=False)
+    async def _search_keyword(self, request: APIRequestContext, keyword: str) -> list[Tender]:
+        payload = {
+            "filtr": {"klicova_slova": [keyword], "skupinaZakazek": "VSE"},
+            "strankovani": {"stranka": 1, "pocet_zaznamu": MAX_ROWS_PER_KEYWORD},
+            "razeni": {
+                "atribut": "DATUM_UVEREJNENI_NA_ZAKAZKY_GOV",
+                "typ_razeni": "SESTUPNE",
+            },
+        }
+        response = await request.post(
+            API_SEARCH_URL, data=payload, timeout=self.request_timeout_ms
         )
-        if fulltext_switch is not None:
-            try:
-                await fulltext_switch.click(timeout=5_000)
-                await page.wait_for_timeout(500)
-            except Exception:
-                logger.debug("Zakázky GOV: klik na přepínač 'Fulltextové vyhledávání' selhal")
-        else:
-            logger.debug("Zakázky GOV: viditelný přepínač 'Fulltextové vyhledávání' nenalezen")
+        if not response.ok:
+            body = (await response.text())[:300]
+            raise RuntimeError(f"API vyhledávání HTTP {response.status}: {body}")
+        data = await response.json()
+        records = data.get("polozky") or []
+        logger.info("Zakázky GOV [%s]: API vrátilo záznamů=%s", keyword, len(records))
 
-        # Najdeme VIDITELNÉ vyhledávací pole (log z prvního běhu ukázal, že na
-        # stránce existuje i skrytá kopie se stejným placeholderem, proto tady
-        # výslovně filtrujeme na is_visible()).
-        search_box = await self._first_visible(
-            page.get_by_placeholder("Zeptejte se Zakázek GOV", exact=False)
-        )
-        if search_box is None:
-            search_box = await self._first_visible(page.locator("input[type='search']"))
-        if search_box is None:
-            search_box = await self._first_visible(page.locator("input[type='text']"))
-        if search_box is None:
-            raise RuntimeError("viditelné vyhledávací pole na stránce nenalezeno")
-
-        await search_box.scroll_into_view_if_needed()
-        await search_box.click(timeout=8_000)
-        await search_box.fill(keyword)
-
-        # Odešleme hledání - přednostně tlačítkem "Hledat zakázku", jinak Enter
-        clicked = False
-        search_btn = await self._first_visible(page.get_by_role("button", name="Hledat zakázku"))
-        if search_btn is not None:
-            try:
-                await search_btn.click(timeout=5_000)
-                clicked = True
-            except Exception:
-                pass
-        if not clicked:
-            await search_box.press("Enter")
-
-        # Počkáme na vykreslení výsledků hledání
-        await page.wait_for_timeout(4_000)
-        try:
-            await page.wait_for_load_state("networkidle", timeout=15_000)
-        except Exception:
-            pass
-
-        # Datum z JSONu vyhledávacího API napárujeme na zakázky podle čísla (RVZ...)
-        date_map = self._build_date_map(captured_json)
-
-        # Jednorázová diagnostika názvů polí v API - ať víme, jak se jmenuje
-        # datum zveřejnění (published), které se zatím nedaří napárovat.
-        if not self._keys_logged:
-            self._keys_logged = True
-            sample_keys = self._sample_record_keys(captured_json)
-            if sample_keys:
-                logger.info("Zakázky GOV DIAGNOSTIKA – klíče záznamu zakázky v API: %s", sample_keys)
-
-        # Jednorázová diagnostika - ukážeme, co síť během hledání vrací, ať víme,
-        # kde jsou data uložená (pro případné doladění).
-        if not date_map and not self._sample_logged:
-            self._sample_logged = True
-            # 1) seznam URL požadavků (zkrácený) - hledáme, kde je datové API
-            url_list = " || ".join(u[:120] for u in all_urls[:40])
-            logger.info("Zakázky GOV DIAGNOSTIKA – URL požadavků (%s): %s", len(all_urls), url_list)
-            # 2) obsah zachycených JSON odpovědí (začátek každé)
-            if captured_json:
-                for i, (u, d) in enumerate(captured_json[:5]):
-                    logger.info("Zakázky GOV DIAGNOSTIKA – JSON #%s z %s: %s", i, u[:120], str(d)[:600])
-            else:
-                logger.info("Zakázky GOV DIAGNOSTIKA – žádná datová JSON odpověď se nezachytila")
-
-        try:
-            return await self._extract_results(page, keyword, date_map)
-        finally:
-            page.remove_listener("response", _on_response)
-
-    @staticmethod
-    async def _first_visible(locator):
-        """Vrátí první VIDITELNOU shodu z locatoru, nebo None.
-
-        Nutné proto, že stránka umí mít stejný prvek (např. vyhledávací pole)
-        vykreslený vícekrát – jednu viditelnou verzi a jednu skrytou (typicky
-        kvůli responzivnímu layoutu) – a obyčejné `.first` může trefit tu
-        skrytou, na kterou pak Playwright nikdy nedokáže kliknout.
-        """
-        try:
-            count = await locator.count()
-        except Exception:
-            return None
-        for i in range(count):
-            candidate = locator.nth(i)
-            try:
-                if await candidate.is_visible():
-                    return candidate
-            except Exception:
-                continue
-        return None
-
-    @staticmethod
-    async def _dismiss_cookie_banner(page: Page) -> None:
-        for text in ("Souhlasím", "Přijmout", "Rozumím", "Povolit vše", "Přijmout vše"):
-            try:
-                btn = page.get_by_role("button", name=text)
-                if await btn.count() and await btn.first.is_visible():
-                    await btn.first.click(timeout=2_000)
-                    await page.wait_for_timeout(300)
-                    return
-            except Exception:
-                continue
-
-    async def _extract_results(self, page: Page, keyword: str, date_map: dict) -> list[Tender]:
         tenders: list[Tender] = []
-        links = await page.locator(_DETAIL_LINK_SELECTOR).all()
-        logger.info("Zakázky GOV [%s]: nalezeno odkazů=%s (dat z API=%s)",
-                    keyword, len(links), len(date_map))
-
-        seen_urls: set[str] = set()
-        seen_ids: set[str] = set()
-        for link in links[: MAX_ROWS_PER_KEYWORD * 3]:
-            href = await link.get_attribute("href")
-            if not href:
+        for rec in records[:MAX_ROWS_PER_KEYWORD]:
+            if not isinstance(rec, dict):
                 continue
-            # Odkazy s ?view=compact obalují jen číslo zakázky (bez názvu)
-            # a tatáž zakázka je v seznamu ještě jednou s plným odkazem -
-            # compact verzi proto přeskočíme, jinak vznikají duplicity.
-            if "view=compact" in href:
-                continue
-            url = self.absolute_url(page.url, href)
-            if url in seen_urls:
-                continue
-            seen_urls.add(url)
-
-            # Číslo zakázky z URL - slouží i k deduplikaci (stejná zakázka
-            # může mít v seznamu víc variant odkazu)
-            url_id = None
-            m = re.search(r"(RVZ\d{6,}|N\d{3}[/-]\d{2}[/-][A-Z]\d+)", url)
-            if m:
-                url_id = m.group(1)
-                if url_id in seen_ids:
-                    continue
-
-            # Karta zakázky - zkusíme najít celý řádek/kartu (obsahuje víc
-            # informací než jen samotný odkaz, který někdy obaluje pouze
-            # číslo zakázky).
-            container = link.locator(
-                "xpath=ancestor::tr[1] | ancestor::*[contains(@class,'card')][1] "
-                "| ancestor::li[1] | ancestor::article[1]"
-            ).first
-            context_text = ""
-            if await container.count():
-                context_text = self.clean_text(await container.inner_text())
-            if not context_text:
-                context_text = self.clean_text(await link.inner_text())
-
-            lines = [ln.strip() for ln in context_text.splitlines() if ln.strip()]
-            # Název bereme z první řádky, která nevypadá jen jako číslo zakázky
-            title = next((ln for ln in lines if not _ID_LINE_RE.match(ln) and len(ln) > 4), "")
-            # Bez skutečného názvu (jen číslo zakázky) záznam zahodíme -
-            # plnohodnotná verze téže zakázky je v seznamu taky.
-            if not title or len(title) < 5 or _ID_LINE_RE.match(title):
+            ext_id = rec.get("identifikator_NIPEZ")
+            title = self.clean_text(rec.get("nazev_verejne_zakazky"))
+            if not ext_id or not title:
                 continue
 
-            # Zadavatel = první další řádka, co není číslo zakázky
-            authority = next(
-                (ln for ln in lines if ln != title and not _ID_LINE_RE.match(ln) and len(ln) > 2),
-                None,
-            )
-            external_id = next((ln for ln in lines if _ID_LINE_RE.match(ln)), None) or url_id
+            stav = (rec.get("stav") or "").upper()
+            if stav and not stav.startswith("AKTIVNI"):
+                logger.debug("Zakázky GOV skip stav=%s: %s", stav, title[:60])
+                continue
 
-            # Datum z karty (pokud tam náhodou je)
-            published = self.value_after_label(context_text, _PUBLISHED_LABELS) or \
-                self._fuzzy_date_after_label(context_text, _PUBLISHED_LABELS)
-            deadline = self.value_after_label(context_text, _DEADLINE_LABELS) or \
-                self._fuzzy_date_after_label(context_text, _DEADLINE_LABELS)
+            deadline = rec.get("lhuta_pro_podani") or None
+            if isinstance(deadline, str):
+                # "2026-08-19T08:00:00Z" -> "2026-08-19T08:00:00"
+                # (formát, který umí BaseScraper._parse_date)
+                deadline = deadline.strip()[:19] or None
 
-            # Datum z JSON odpovědi vyhledávacího API (napárováno podle čísla zakázky)
-            if external_id and external_id in date_map:
-                api_pub, api_dl = date_map[external_id]
-                published = published or api_pub
-                deadline = deadline or api_dl
+            published, hodnota_radek = await self._fetch_detail_extra(request, ext_id)
+
+            description = self.clean_text(rec.get("popis_predmetu"))
+            if len(description) > MAX_DESCRIPTION_CHARS:
+                description = description[:MAX_DESCRIPTION_CHARS] + "…"
+            if hodnota_radek:
+                description = f"{hodnota_radek}\n\n{description}" if description else hodnota_radek
 
             tender = Tender(
                 source=self.source,
                 title=title,
-                url=url,
-                authority=authority,
+                url=WEB_DETAIL_URL.format(id=ext_id),
+                authority=self.clean_text(rec.get("nazev_zadavatele")) or None,
                 published_at=published,
                 deadline_at=deadline,
-                external_id=external_id,
-                description=context_text or None,
+                external_id=ext_id,
+                description=description or None,
             )
             if _is_foreign(tender):
                 continue
-
             tender.matched_keywords = [keyword]
             tenders.append(tender)
-            if url_id:
-                seen_ids.add(url_id)
-            if len(tenders) >= MAX_ROWS_PER_KEYWORD:
-                break
 
         return self.deduplicate_tenders(tenders)
 
-    @classmethod
-    def _sample_record_keys(cls, captured_json: list) -> str | None:
-        """Najde v API první objekt, který vypadá jako záznam zakázky
-        (obsahuje číslo RVZ…), a vrátí seznam jeho klíčů. Slouží jen k tomu,
-        abychom v logu jednou viděli, jak se pole (hlavně datum) jmenují."""
-        found: list[str] = []
+    async def _fetch_detail_extra(
+        self, request: APIRequestContext, ext_id: str
+    ) -> tuple[str | None, str | None]:
+        """Stáhne detail zakázky a vrátí (datum_uverejneni, radek_o_hodnote).
 
-        def _walk(obj, depth=0):
-            if found or depth > 8:
-                return
-            if isinstance(obj, dict):
-                for v in obj.values():
-                    if isinstance(v, str) and re.search(r"RVZ\d{6,}", v):
-                        found.extend(obj.keys())
-                        return
-                for v in obj.values():
-                    _walk(v, depth + 1)
-            elif isinstance(obj, list):
-                for item in obj:
-                    _walk(item, depth + 1)
-
-        for _url, data in captured_json:
-            _walk(data)
-            if found:
-                break
-        return ", ".join(found) if found else None
-
-    @classmethod
-    def _build_date_map(cls, captured_json: list) -> dict:
-        """Z JSON odpovědí vyhledávacího API sestaví mapu:
-        číslo_zakázky (RVZ…) -> (datum_zveřejnění, lhůta_podání).
-
-        Nezná přesnou strukturu API předem, proto rekurzivně hledá objekty,
-        které mají zároveň něco jako číslo zakázky (RVZ…) a nějaké datum.
+        Detail se pro každou zakázku stahuje jen jednou za běh (cache),
+        chyba detailu zakázku nezahazuje - jen zůstane bez data/hodnoty.
         """
-        date_map: dict = {}
-        for _url, data in captured_json:
-            cls._harvest_records(data, date_map)
-        return date_map
+        if ext_id in self._detail_cache:
+            return self._detail_cache[ext_id]
+
+        published: str | None = None
+        hodnota_radek: str | None = None
+        try:
+            response = await request.get(
+                API_DETAIL_URL.format(id=ext_id), timeout=self.request_timeout_ms
+            )
+            if response.ok:
+                data = await response.json()
+                if isinstance(data, dict):
+                    # Datum uveřejnění - přesný název pole (stav k 07/2026)
+                    value = data.get("uverejneniNaZakazkyGov")
+                    if not isinstance(value, str):
+                        # Záloha: kdyby portál pole přejmenoval, vezmeme první
+                        # textové pole, jehož název obsahuje "uverejnen"
+                        value = next(
+                            (
+                                v for k, v in data.items()
+                                if isinstance(v, str) and "uverejnen" in k.lower()
+                            ),
+                            None,
+                        )
+                    published = self.first_date(value) if value else None
+                    hodnota_radek = self._hodnota_radek(data)
+            else:
+                logger.debug("Zakázky GOV detail %s: HTTP %s", ext_id, response.status)
+        except Exception as exc:
+            logger.debug("Zakázky GOV detail %s chyba: %s", ext_id, exc)
+
+        if published is None:
+            logger.info("Zakázky GOV: detail %s bez data uveřejnění", ext_id)
+        self._detail_cache[ext_id] = (published, hodnota_radek)
+        return published, hodnota_radek
 
     @classmethod
-    def _harvest_records(cls, obj, date_map: dict, _depth: int = 0) -> None:
-        if _depth > 8:
-            return
-        if isinstance(obj, dict):
-            # Najdeme v tomto objektu číslo zakázky
-            ext_id = None
-            for k, v in obj.items():
-                if isinstance(v, str):
-                    m = re.search(r"(RVZ\d{6,}|N\d{3}[/-]\d{2}[/-][A-Z]\d+)", v)
-                    if m:
-                        ext_id = m.group(1)
-                        break
-            if ext_id:
-                published = cls._find_date_value(obj, _PUBLISHED_JSON_KEYS)
-                deadline = cls._find_date_value(obj, _DEADLINE_JSON_KEYS)
-                if (published or deadline) and ext_id not in date_map:
-                    date_map[ext_id] = (
-                        BaseScraper.first_date(published) if published else None,
-                        BaseScraper.first_date(deadline) if deadline else None,
-                    )
-            for v in obj.values():
-                cls._harvest_records(v, date_map, _depth + 1)
-        elif isinstance(obj, list):
-            for item in obj:
-                cls._harvest_records(item, date_map, _depth + 1)
+    def _hodnota_radek(cls, detail: dict) -> str | None:
+        """Zkusí najít předpokládanou hodnotu zakázky v detailu (Kč).
 
-    @staticmethod
-    def _find_date_value(obj, key_substrings: tuple[str, ...], _depth: int = 0) -> str | None:
-        """Rekurzivně projde JSON strukturu a vrátí první textovou hodnotu
-        u klíče, jehož (normalizovaný) název obsahuje jeden z key_substrings."""
+        Portál ji u naživo ověřených zakázek nezveřejnil (pole
+        "predpokladana_hodnota_bude_uverejnena": false) - to je zákonná
+        praxe zadavatele, ne chyba scraperu. Když by ji přesto zveřejnil,
+        hledáme obecně libovolný číselný klíč obsahující "hodnota". Když
+        číslo nenajdeme, doplníme aspoň kategorii dle výše hodnoty
+        (nadlimitní/podlimitní/malého rozsahu), ať je z karty v CRM vidět
+        aspoň řádová velikost zakázky.
+        """
+        castka = cls._najdi_cislo_hodnoty(detail)
+        if castka is not None:
+            return f"Předpokládaná hodnota: {castka:,} Kč".replace(",", " ")
+
+        kategorie_kod = detail.get("typ_verejne_zakazky_dle_vyse_predpokladane_hodnoty")
+        if isinstance(kategorie_kod, str) and kategorie_kod:
+            popisek = _KATEGORIE_HODNOTY.get(
+                kategorie_kod, kategorie_kod.replace("_", " ").lower()
+            )
+            return f"Kategorie dle předpokládané hodnoty: {popisek} (přesná částka nezveřejněna)"
+        return None
+
+    @classmethod
+    def _najdi_cislo_hodnoty(cls, obj, _depth: int = 0) -> int | None:
         if _depth > 6:
             return None
         if isinstance(obj, dict):
             for k, v in obj.items():
-                kl = normalize_text(k).replace(" ", "")
-                if isinstance(v, str) and v.strip() and any(p in kl for p in key_substrings):
-                    return v
+                kl = k.lower()
+                if "hodnota" not in kl or any(ex in kl for ex in _HODNOTA_KEY_EXCLUDE):
+                    continue
+                if isinstance(v, (int, float)) and not isinstance(v, bool) and v >= 1000:
+                    return int(v)
             for v in obj.values():
-                found = ZakazkyGovScraper._find_date_value(v, key_substrings, _depth + 1)
-                if found:
+                found = cls._najdi_cislo_hodnoty(v, _depth + 1)
+                if found is not None:
                     return found
         elif isinstance(obj, list):
-            for item in obj[:50]:
-                found = ZakazkyGovScraper._find_date_value(item, key_substrings, _depth + 1)
-                if found:
+            for item in obj[:20]:
+                found = cls._najdi_cislo_hodnoty(item, _depth + 1)
+                if found is not None:
                     return found
-        return None
-
-    @staticmethod
-    def _fuzzy_date_after_label(text: str, labels: tuple[str, ...]) -> str | None:
-        """Najde datum do 40 znaků za popiskem, i když mezi nimi je další text
-        (např. "Datum uveřejnění výzvy do systému: 15. 7. 2026")."""
-        for label in labels:
-            pattern = re.compile(
-                rf"{re.escape(label)}.{{0,40}}?({DATE_RE.pattern})",
-                re.IGNORECASE | re.DOTALL,
-            )
-            match = pattern.search(text)
-            if match:
-                return BaseScraper.first_date(match.group(1))
         return None
 
     async def scrape_page(self, page: Page) -> list[Tender]:
-        # Nepoužívá se – veškerá logika je v scrape()/_search_keyword(), protože
-        # tento portál potřebuje pro každé klíčové slovo vlastní vyhledávání.
+        # Nepoužívá se - scraper jde přímo přes API v scrape().
         return []

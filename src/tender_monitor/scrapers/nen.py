@@ -19,7 +19,7 @@ _SEARCH_URL = (
     "/p:vz:query={keyword}"
 )
 
-MAX_ROWS_PER_KEYWORD = 5
+MAX_ROWS_PER_KEYWORD = 40  # původně 5 — kvůli tomu unikaly zakázky
 
 
 class NenScraper(BaseScraper):
