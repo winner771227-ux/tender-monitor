@@ -76,44 +76,48 @@ ID_HEADER_ALIASES = ("systemove cislo", "evidencni cislo", "id", "cislo zakazky"
 
 # ---------------------------------------------------------------------------
 # Slovak / Polish word lists – used to reject non-Czech tenders
+#
+# POZOR: porovnání probíhá přes normalize_text(), která odstraní diakritiku.
+# Proto sem NESMÍ přijít slova, jejichž bezháčková podoba splývá s běžnou
+# češtinou. Např. slovenské "zákazka" -> "zakazka" == české "zakázka",
+# takže by se jako „zahraniční“ omylem vyhodila skoro každá česká zakázka.
+# Uvádíme jen slova, která jsou po odstranění diakritiky jednoznačně SK/PL.
 # ---------------------------------------------------------------------------
 
 _SK_WORDS = {
     # Slovenská města
-    "bratislava", "košice", "prešov", "zilina", "nitra", "trnava", "trencin", "trenčín",
-    "banska bystrica", "bardejov", "trebisov", "trebišov", "vranov", "poprad",
-    "michalovce", "humenne", "humenné", "roznava", "rožňava",
+    "bratislava", "kosice", "presov", "zilina", "nitra", "trnava", "trencin",
+    "banska bystrica", "bardejov", "trebisov", "vranov", "poprad",
+    "michalovce", "humenne", "roznava",
     # Slovenský stát
-    "slovensko", "slovak", "slovenska republika", "slovenská republika",
-    # Slovenské výrazy ve veřejných zakázkách
-    "zakazka", "zakazky", "zakaziek", "zákazka", "zákazky",
-    "obstaravanie", "obstarávanie", "obstaravatel", "obstarávateľ",
-    "uchadzac", "uchádzač", "sutaz", "súťaž", "verejná súťaž",
-    # Slovenská gramatika – předložky a koncovky typické pro slovenštinu
-    " pre zavod", " pre analyzu", " pre analyzu", " pri ms", " pri zs",
+    "slovensko", "slovak", "slovenska republika",
+    # Slovenské výrazy ve veřejných zakázkách (jednoznačně SK i bez diakritiky)
+    "obstaravanie", "obstaravatel", "uchadzac", "verejna sutaz",
+    # Slovenská gramatika – předložky a spojení typické pro slovenštinu
+    " pre zavod", " pre analyzu", " pri ms", " pri zs",
     "dns vakm", "dns mfsr",
-    # Slovenská slova která se v češtině nevyskytují
-    "zariadeni", "zariadenia", "zariadenie",   # zařízení
-    "vodicov", "vodičov",                        # řidičů
-    "rozsirovanie", "rozširenie", "rozšírenie",  # rozšíření
-    "zvaranie", "zváranie",                      # svařování
-    "kolajovych", "koľajových", "kolajnic", "koľajníc",
-    "polne", "poľné", "polnych", "poľných",      # polní
-    "lesnicke", "lesnícke",
-    "namestie", "námestie", "naberezie", "nábrežie",
-    "pamatnik", "pamätník",
-    "brusenie", "brúsenie",
-    "eurominci", "euromincí",
-    "socialnych", "sociálnych",
-    "detekčna", "detekčná", "detekčne", "detekčné",
+    # Slovenská slova, která se v češtině nevyskytují
+    "zariadenie", "zariadenia",                  # zařízení
+    "vodicov",                                    # řidičů
+    "rozsirovanie", "rozsirenie",                 # rozšíření
+    "zvaranie",                                   # svařování
+    "kolajovych", "kolajnic",
+    "polne", "polnych",                           # polní
+    "lesnicke",
+    "namestie", "naberezie",
+    "pamatnik",
+    "brusenie",
+    "eurominci",
+    "socialnych",
+    "detekcna", "detekcne",
 }
 
 _PL_WORDS = {
-    "zamowienie", "zamówienie", "zamówień", "przetarg", "zamawiajacy", "zamawiający",
-    "wykonawca", "rzeczpospolita", "warszawa", "krakow", "kraków", "wroclaw", "wrocław",
+    "zamowienie", "zamowien", "przetarg", "zamawiajacy",
+    "wykonawca", "rzeczpospolita", "warszawa", "krakow", "wroclaw",
     # Polská slova z logu
     "zapytanie", "ofertowe", "jednorazowa", "dostawa",
-    "czerpania", "punktow", "punktów", "budowy",
+    "czerpania", "punktow", "budowy",
 }
 
 
@@ -122,8 +126,15 @@ def _is_foreign(tender: Tender) -> bool:
     text = normalize_text(
         " ".join(part or "" for part in (tender.title, tender.authority, tender.description))
     )
+    # Slova porovnáváme jako celé tokeny, ne jako podřetězce, aby "dostava"
+    # neodmítlo české slovo obsahující stejnou sekvenci písmen uvnitř.
+    tokens = set(text.split())
     for word in _SK_WORDS | _PL_WORDS:
-        if normalize_text(word) in text:
+        norm_word = normalize_text(word)
+        if " " in norm_word:
+            if norm_word in text:
+                return True
+        elif norm_word in tokens:
             return True
     # URL-based check (e.g. .sk or .pl domains)
     url_lower = (tender.url or "").lower()
@@ -206,26 +217,29 @@ class BaseScraper(ABC):
                 matches = self._keyword_matches(tender)
             if not matches:
                 continue
-            # 3. Datum ZVEŘEJNĚNÍ (published_at) nesmí být starší než 14 dní
+            # 3. Datové okno. Cílem je udržet dosud otevřené zakázky a odfiltrovat
+            #    ty už uzavřené / dávno zveřejněné. Zakázku ODMÍTNEME, když:
+            #      a) lhůta pro podání nabídek už uplynula a zároveň nejde
+            #         o čerstvě (do 14 dnů) zveřejněnou zakázku, NEBO
+            #      b) lhůtu neznáme, ale zakázka byla zveřejněná dříve než před 14 dny.
+            #    Když nemáme ani lhůtu, ani datum zveřejnění, zakázku ponecháme.
             published = self._parse_date(tender.published_at) if tender.published_at else None
-            if published is not None and published < cutoff:
+            deadline = self._parse_date(tender.deadline_at) if tender.deadline_at else None
+            published_recent = published is not None and published >= cutoff
+            if deadline is not None and deadline < now and not published_recent:
                 logger.info(
-                    "SKIP stará published=%s: %s",
+                    "SKIP uzavřená zakázka lhůta=%s published=%s: %s",
+                    tender.deadline_at, tender.published_at, tender.title[:60],
+                )
+                continue
+            if deadline is None and published is not None and published < cutoff:
+                logger.info(
+                    "SKIP stará bez lhůty published=%s: %s",
                     tender.published_at, tender.title[:60],
                 )
                 continue
-            # 4. Zakázky bez published_at - filtrujeme podle lhůty podání
-            #    Pokud lhůta vypršela před více než 60 dny, zakázka je stará
-            if published is None:
-                deadline = self._parse_date(tender.deadline_at) if tender.deadline_at else None
-                if deadline is not None and deadline < (now - timedelta(days=60)):
-                    logger.info(
-                        "SKIP stará bez data, lhůta=%s: %s",
-                        tender.deadline_at, tender.title[:60],
-                    )
-                    continue
-                if deadline is None:
-                    logger.info("POZOR bez data zveřejnění: %s – %s", self.source, tender.title[:60])
+            if deadline is None and published is None:
+                logger.info("POZOR bez data: %s – %s", self.source, tender.title[:60])
 
             tender.matched_keywords = matches
             result.append(tender)

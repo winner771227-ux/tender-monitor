@@ -1,5 +1,6 @@
 """Registry of all active scraper classes."""
 from tender_monitor.scrapers.aspo import AspoScraper
+from tender_monitor.scrapers.baseproebiz import BaseProebizScraper
 from tender_monitor.scrapers.e_zakazky import EZakazkyScraper
 from tender_monitor.scrapers.eveza import EvezaScraper
 from tender_monitor.scrapers.josephine import JosephineScraper
@@ -19,13 +20,14 @@ SCRAPER_CLASSES = (
     JosephineScraper,
     AspoScraper,            # ASPO – XML feed + NEN profil (Ministerstvo obrany)       # JOSEPHINE – centrální seznam, vyhledávání ✅
     ProfilyProebizScraper,  # Profily PROEBIZ – centrální seznam ✅
-    
+    BaseProebizScraper,     # BASE PROEBIZ – katalog probíhajících eAukcí (baseproebiz.com) ✅
+
 
     # ⚠️ ČÁSTEČNĚ – přidáváme ale mohou vracet 0
     EvezaScraper,           # eVeZa – vyhledávání funguje, výsledky se ověřují
     # PortalDodavateleScraper,  # Portál Dodavatele – vyžaduje přihlášení, blokuje roboty
     # VhodneUverejneniScraper,  # Vhodné uveřejnění – timeout na GitHub Actions
-    
+
 
     # 🆕 NOVÝ - otestováno, vrací zakázky s lhůtou z API, filtr funguje
     ZakazkyGovScraper,     # Zakázky GOV – nový centrální portál NIPEZ (zakazky.gov.cz)
@@ -43,6 +45,7 @@ SCRAPER_CLASSES = (
 __all__ = [
     "SCRAPER_CLASSES",
     "AspoScraper",
+    "BaseProebizScraper",
     "EZakazkyScraper",
     "EvezaScraper",
     "JosephineScraper",
