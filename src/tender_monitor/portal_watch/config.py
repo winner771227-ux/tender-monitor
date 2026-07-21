@@ -10,10 +10,18 @@ prohlížeč), zatímco hlídač stahuje stránky jednoduše bez prohlížeče.
 U portálů, které se vykreslují až JavaScriptem (hlavně NEN), proto hlídač
 vidí jen "kostru" stránky — velké změny (redesign, přesměrování, změna
 adres) ale zachytí spolehlivě i tak.
+
+Zakázky GOV (zakazky.gov.cz) — scraper zakazky_gov.py vůbec nenačítá
+stránku prohlížečem, volá přímo JSON API (api.isd.nipez.cz). Hlídač proto
+posílá stejný POST dotaz jako scraper a sleduje strukturu (klíče) JSON
+odpovědi, plus navíc úvodní stránku portálu jako pojistku proti úplnému
+výpadku nebo redesignu.
 """
 
 # ---------------------------------------------------------------
 # FUNKČNÍ PORTÁLY — u nich hlídáme změny struktury stránek
+# (seznam odpovídá aktivním (nezakomentovaným) třídám v
+#  SCRAPER_CLASSES, src/tender_monitor/scrapers/__init__.py)
 # ---------------------------------------------------------------
 WATCHED_PORTALS = [
     {
@@ -68,6 +76,32 @@ WATCHED_PORTALS = [
         "pages": [
             {"label": "úvod + fulltext formulář",
              "url": "https://eveza.cz/",
+             "kind": "html"},
+        ],
+    },
+    {
+        "name": "Zakázky GOV",
+        # zdroj: scrapers/zakazky_gov.py — centrální portál NIPEZ, scraper
+        # volá přímo JSON API (bez prohlížeče a bez načtení webové stránky).
+        "pages": [
+            {"label": "vyhledávací API",
+             "url": "https://api.isd.nipez.cz/isd/seznam/zakazek/hlavni-seznam",
+             "kind": "json",
+             "method": "post",
+             # Stejný tvar dotazu jako v _search_keyword() ve scraperu,
+             # jen s jedním klíčovým slovem a jedním záznamem — hlídáme
+             # tvar odpovědi (klíče jako identifikator_NIPEZ,
+             # nazev_verejne_zakazky, lhuta_pro_podani...), ne data.
+             "json_body": {
+                 "filtr": {"klicova_slova": ["demolice"], "skupinaZakazek": "VSE"},
+                 "strankovani": {"stranka": 1, "pocet_zaznamu": 1},
+                 "razeni": {
+                     "atribut": "DATUM_UVEREJNENI_NA_ZAKAZKY_GOV",
+                     "typ_razeni": "SESTUPNE",
+                 },
+             }},
+            {"label": "úvodní stránka",
+             "url": "https://zakazky.gov.cz/",
              "kind": "html"},
         ],
     },

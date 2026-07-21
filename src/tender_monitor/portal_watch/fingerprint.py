@@ -22,19 +22,21 @@ from bs4 import BeautifulSoup
 from .config import REQUEST_TIMEOUT, USER_AGENT
 
 
-def fetch(url: str):
+def fetch(url: str, method: str = "get", json_body: dict | None = None):
     """
-    Stáhne stránku a vrátí odpověď (nebo vyhodí výjimku).
-    Při selhání (timeout apod.) to zkusí ještě jednou —
-    NEN a spol. občas jen chvíli nestíhají.
+    Stáhne stránku (GET) nebo zavolá API (POST s JSON tělem) a vrátí
+    odpověď (nebo vyhodí výjimku). Při selhání (timeout apod.) to zkusí
+    ještě jednou — NEN a spol. občas jen chvíli nestíhají.
     """
     import time
 
     last_exc = None
     for attempt in (1, 2):
         try:
-            return requests.get(
+            return requests.request(
+                method.upper(),
                 url,
+                json=json_body if method.lower() == "post" else None,
                 headers={"User-Agent": USER_AGENT, "Accept-Language": "cs,en;q=0.8"},
                 timeout=REQUEST_TIMEOUT,
                 allow_redirects=True,
@@ -95,9 +97,11 @@ def _json_key_paths(data, prefix="") -> set:
     return paths
 
 
-def build_fingerprint(url: str, kind: str) -> dict:
-    """Stáhne stránku a vytvoří její otisk."""
-    resp = fetch(url)
+def build_fingerprint(
+    url: str, kind: str, method: str = "get", json_body: dict | None = None
+) -> dict:
+    """Stáhne stránku (nebo zavolá API) a vytvoří její otisk."""
+    resp = fetch(url, method=method, json_body=json_body)
     fp = {
         "url": url,
         "status": resp.status_code,

@@ -64,7 +64,12 @@ def main() -> int:
             page_key = f"{portal['name']}::{page['label']}"
             print(f"Kontroluji {portal['name']} — {page['label']} ({page['url']})")
             try:
-                new_fp = build_fingerprint(page["url"], page["kind"])
+                new_fp = build_fingerprint(
+                    page["url"],
+                    page["kind"],
+                    method=page.get("method", "get"),
+                    json_body=page.get("json_body"),
+                )
             except Exception as exc:
                 new_fetch_errors.add(page_key)
                 detail = (f"Stránku '{page['label']}' se nepodařilo stáhnout "
