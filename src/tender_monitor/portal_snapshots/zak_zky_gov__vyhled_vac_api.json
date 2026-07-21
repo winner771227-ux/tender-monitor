@@ -1,0 +1,19 @@
+{
+  "url": "https://api.isd.nipez.cz/isd/seznam/zakazek/hlavni-seznam",
+  "status": 200,
+  "content_type": "application/json",
+  "final_url_path": "/isd/seznam/zakazek/hlavni-seznam",
+  "json_keys": [
+    "polozky",
+    "polozky[].identifikator_NIPEZ",
+    "polozky[].lhuta_pro_podani",
+    "polozky[].nazev_verejne_zakazky",
+    "polozky[].nazev_zadavatele",
+    "polozky[].popis_predmetu",
+    "polozky[].stav",
+    "polozky[].stitky",
+    "polozky[].typ_zadavaciho_postupu",
+    "posledni_stranka"
+  ],
+  "parses_as_json": true
+}
