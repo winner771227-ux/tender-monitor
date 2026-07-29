@@ -94,7 +94,7 @@ WATCHED_PORTALS = [
              # nazev_verejne_zakazky, lhuta_pro_podani...), ne data.
              "json_body": {
                  "filtr": {"klicova_slova": ["demolice"], "skupinaZakazek": "VSE"},
-                 "strankovani": {"stranka": 1, "pocet_zaznamu": 1},
+                 "strankovani": {"stranka": 1, "pocet_zaznamu": 5},
                  "razeni": {
                      "atribut": "DATUM_UVEREJNENI_NA_ZAKAZKY_GOV",
                      "typ_razeni": "SESTUPNE",
