@@ -18,6 +18,7 @@ DEFAULT_KEYWORDS = (
     "demoliční práce",
     "demoliční",
     "zbourání",
+    "likvidace stavby",
 )
 
 

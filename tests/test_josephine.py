@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import sys
 import types
+from urllib.parse import quote
 
 if importlib.util.find_spec("playwright") is None:
     playwright_module = types.ModuleType("playwright")
@@ -10,17 +11,21 @@ if importlib.util.find_spec("playwright") is None:
     async_api_module.Browser = object
     async_api_module.Page = object
     async_api_module.Locator = object
+    async_api_module.APIRequestContext = object
     sys.modules["playwright"] = playwright_module
     sys.modules["playwright.async_api"] = async_api_module
 
 from tender_monitor.models import Tender
-from tender_monitor.scrapers.josephine import JosephineScraper
+from tender_monitor.scrapers.josephine import _SEARCH_URL, JosephineScraper
 
 
 def test_build_tender_from_josephine_table_cells() -> None:
+    # Pořadí sloupců odpovídá reálné tabulce na josephine.proebiz.com:
+    # ID | Číslo spisu VZ | Název zakázky | (ikona) | Zadavatel |
+    # Předpokládaná hodnota | Lhůta pro podávání | (odkaz na detail)
     cells = [
-        "77782\nSITB-OO3-2026/001743",
-        "",
+        "77782",
+        "SITB-OO3-2026/001743",
         "Odstranění stavby bývalé kotelny\n45110000-1",
         "",
         "Město Test\nCZ064",
@@ -29,7 +34,7 @@ def test_build_tender_from_josephine_table_cells() -> None:
         "",
     ]
 
-    tender = JosephineScraper._build_tender_from_cells(
+    tender = JosephineScraper._build(
         cells,
         "/cs/tender/77782/summary",
         "https://josephine.proebiz.com/cs/public-tenders/all",
@@ -44,30 +49,53 @@ def test_build_tender_from_josephine_table_cells() -> None:
     assert tender.external_id == "77782"
 
 
-def test_keyword_matching_is_accent_insensitive() -> None:
-    scraper = JosephineScraper(("demoliční práce", "odstranění stavby"), 30_000)
+def test_build_tender_without_href_falls_back_to_summary_url() -> None:
+    cells = [
+        "80404",
+        "37/2026/sir",
+        "Šternberk, odstranění komplexu budov v areálu zimního stadionu",
+        "",
+        "Město Šternberk\nCZ071",
+        "8 000 000,00 Kč\nVZMR",
+        "26.08.2026 10:00:00\nProbíhající",
+        "",
+    ]
+
+    tender = JosephineScraper._build(
+        cells, None, "https://josephine.proebiz.com/cs/public-tenders/all",
+    )
+
+    assert tender is not None
+    assert tender.url == "https://josephine.proebiz.com/cs/tender/80404/summary"
+    assert tender.title == "Šternberk, odstranění komplexu budov v areálu zimního stadionu"
+    assert tender.authority == "Město Šternberk"
+    assert tender.deadline_at == "26.08.2026 10:00:00"
+
+
+def test_keyword_matches_is_accent_insensitive() -> None:
+    scraper = JosephineScraper(("demoliční práce", "odstranění komplexu"), 30_000)
     tender = Tender(
         source="JOSEPHINE",
         title="DEMOLICNI PRACE objektu skladu",
         url="https://example.test/tender/1",
     )
 
-    assert scraper.keyword_matches(tender) == ["demoliční práce"]
+    assert scraper._keyword_matches(tender) == ["demoliční práce"]
 
 
-def test_publication_date_uses_earliest_document_date() -> None:
-    detail_text = """
-Informace
-Název zakázky
-Demolice objektu
-Dokumenty
-Název dokumentu Typ Velikost Datum a čas
-Výzva.pdf Dokument 1 MB 20.05.2026 09:45:36
-Příloha.xlsx Dokument 1 MB 18.05.2026 14:00:00
-"""
+def test_search_url_uses_urlencoded_keyword_and_running_state_filter() -> None:
+    # Toto je jádro opravy: scraper už neprochází neřazený výpis "Všechny
+    # soutěže" (stovky stránek, jen zlomek se kdy prohledal), ale posílá
+    # dotaz přímo přes portálový fulltext filtr pro každé klíčové slovo.
+    keyword = "odstranění komplexu"
+    url = _SEARCH_URL.format(keyword=quote(keyword))
 
-    document_section = JosephineScraper._text_after_first_heading(detail_text, ("Dokumenty", "Documents"))
-    dates = [JosephineScraper._first_date(line) for line in document_section.splitlines()]
-    dates = [date for date in dates if date]
+    assert url.startswith("https://josephine.proebiz.com/cs/public-tenders/all?")
+    assert quote(keyword) in url
+    assert "filter[state]=executed" in url
 
-    assert min(dates, key=JosephineScraper._date_sort_key) == "18.05.2026 14:00:00"
+
+def test_date_and_line_helpers() -> None:
+    assert JosephineScraper._date("26.08.2026 10:00:00\nProbíhající") == "26.08.2026 10:00:00"
+    assert JosephineScraper._date("bez data") is None
+    assert JosephineScraper._line("  Město Test  \nCZ064") == "Město Test"
