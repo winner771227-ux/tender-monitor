@@ -1,4 +1,29 @@
-"""Scraper pro NEN - nen.nipez.cz"""
+"""Scraper pro NEN - nen.nipez.cz
+
+OPRAVA (18.8.2026): NEN mezitím přešel na nový frontend (SPA, bundle
+"nen-lightweb", data se tahají přes POST /api/datarows?className=...).
+Živě ověřeno proti produkci - HTML tabulka výsledků vyhledávání
+(`table tr`) pořád existuje a sloupce odpovídají tomu, co scraper čekal
+(0=Detail, 1=Systémové číslo NEN, 2=Název zadávacího postupu,
+3=Aktuální stav, 4=Zadavatel, 5=Lhůta podání nabídek, 6=Detail), takže
+samotné parsování řádků fungovalo dál.
+
+Chyba byla jinde: seznam vrací VŠECHNY zakázky odpovídající fulltextu
+bez ohledu na stav (Neukončen/Zadán/Zrušen/Ukončení plnění), a hodně už
+zadaných/zrušených zakázek nemá v tabulce vyplněnou lhůtu podání. Scraper
+"published_at" vůbec neplní (v seznamu není sloupec s datem zveřejnění),
+takže taková zakázka měla published_at=None i deadline_at=None -
+a BaseScraper._filter() v tom případě zakázku PONECHÁ (viz komentář
+"Když nemáme ani lhůtu, ani datum zveřejnění, zakázku ponecháme").
+Výsledek: uživateli se hlásily už zadané/zrušené zakázky jako aktivní
+příležitosti. Příklad ověřený živě: N006/26/V00023907 "Demolice Českého
+pavilonu EXPO 2025..." má stav "Zadán" a prázdnou lhůtu - beze změny by
+prošla filtrem jako otevřená.
+
+Oprava: čteme sloupec "Aktuální stav" (cells[3]) a bereme jen zakázky se
+stavem "Neukončen" - stejný princip jako u zakazky_gov.py (tam se
+filtruje `stav.startswith("AKTIVNI")`).
+"""
 from __future__ import annotations
 
 import asyncio
@@ -9,6 +34,7 @@ from urllib.parse import quote
 
 from playwright.async_api import Browser, Page
 
+from tender_monitor.dedupe import normalize_text
 from tender_monitor.models import ScrapeResult, Tender
 from tender_monitor.scrapers.base import BaseScraper, _is_foreign
 
@@ -20,6 +46,10 @@ _SEARCH_URL = (
 )
 
 MAX_ROWS_PER_KEYWORD = 40  # původně 5 — kvůli tomu unikaly zakázky
+
+# Stavy zakázky, které bereme jako "pořád běžící" - vše ostatní (Zadán,
+# Zrušen, Ukončení plnění, ...) přeskočíme, i kdyby v tabulce chyběla lhůta.
+_OPEN_STAV = "neukoncen"
 
 
 class NenScraper(BaseScraper):
@@ -60,6 +90,7 @@ class NenScraper(BaseScraper):
                     logger.info("NEN '%s': radky=%s", keyword, len(rows_all))
 
                     found_kw = 0
+                    skipped_stav = 0
                     for row in rows_all:
                         if found_kw >= MAX_ROWS_PER_KEYWORD:
                             break
@@ -80,6 +111,14 @@ class NenScraper(BaseScraper):
                                         break
 
                         if not title:
+                            continue
+
+                        # Sloupec "Aktuální stav" (index 3) - bereme jen běžící
+                        # zakázky. Bez tohohle filtru procházely i už zadané/
+                        # zrušené zakázky bez lhůty (viz docstring nahoře).
+                        stav = cells[3].strip() if len(cells) > 3 else ""
+                        if stav and normalize_text(stav) != _OPEN_STAV:
+                            skipped_stav += 1
                             continue
 
                         external_id = cells[1] if len(cells) > 1 else ""
@@ -121,7 +160,9 @@ class NenScraper(BaseScraper):
                         all_tenders.append(t)
                         found_kw += 1
 
-                    logger.info("NEN '%s': found=%s", keyword, found_kw)
+                    logger.info(
+                        "NEN '%s': found=%s skip_stav=%s", keyword, found_kw, skipped_stav
+                    )
 
                 except Exception as exc:
                     logger.warning("NEN keyword='%s' chyba: %s", keyword, exc)

@@ -1,15 +1,40 @@
 """Scraper pro ASPO – Armádní Servisní, příspěvková organizace
 
 ASPO zadává zakázky výhradně přes NEN (nen.nipez.cz/profil/ASPO).
-Tento scraper prohledává přímo jejich NEN profil a XML feed.
+
+OPRAVA (18.8.2026) - obě dosavadní cesty byly rozbité, živě ověřeno proti
+produkci:
+
+1. XML feed `https://nen.nipez.cz/profil/ASPO/xmldatavz?Typ=1` na novém
+   NEN (viz níže) neodpovídá vůbec - přímý fetch z reálného prohlížeče
+   visel 45+ sekund bez jakékoli odpovědi (ne timeout/404, prostě nic).
+   Feed patrně pochází ze starého NEN a na nové platformě neexistuje.
+   Navíc `_scrape_xml()` hádala názvy XML tagů ("zakazka",
+   "verejna_zakazka", "contract", "item") bez ověření proti reálné
+   odpovědi - i kdyby feed odpovídal, nebylo jisté, že by cokoliv našla.
+   XML cestu proto vypínáme, dokud nemáme ověřený vzorek skutečné
+   odpovědi.
+
+2. Playwright záloha mířila na `https://nen.nipez.cz/profil/ASPO` -
+   tahle URL sice funguje (přesměruje se na nový profil), ale skončí na
+   záložce "Základní informace" (kontakty, IČO...), ŽÁDNÁ tabulka
+   zakázek tam není. NEN je teď SPA (bundle "nen-lightweb", data přes
+   POST /api/datarows?className=...) a seznam zahájených zakázek je na
+   samostatné podstránce, kterou předchozí kód nikdy nenačetl - proto
+   scraper spolehlivě vracel 0 zakázek, ať feed fungoval nebo ne.
+
+Oprava: Playwright teď jde přímo na
+`https://nen.nipez.cz/profily-zadavatelu-platne/detail-profilu/ASPO/zahajene-zakazky`
+(živě ověřeno - HTML tabulka s sloupci Systémové číslo NEN / Název
+zadávacího postupu / Aktuální stav / Zadavatel / Lhůta podání nabídek,
+stejná struktura jako u obecného vyhledávání na NEN, viz nen.py).
+Bereme jen řádky se stavem "Neukončen" (stejný princip jako
+`stav.startswith("AKTIVNI")` v zakazky_gov.py).
 """
 from __future__ import annotations
 
 import logging
 import re
-import urllib.request
-import xml.etree.ElementTree as ET
-from datetime import datetime, timedelta
 
 from playwright.async_api import Page
 
@@ -19,31 +44,26 @@ from tender_monitor.scrapers.base import BaseScraper
 
 logger = logging.getLogger(__name__)
 
-_DATE_RE = re.compile(r"\b(\d{2})\.(\d{2})\.(\d{4})|\d{4}-\d{2}-\d{2}\b")
+# Podstránka profilu ASPO se seznamem zahájených (běžících) zakázek.
+# Živě ověřeno 18.8.2026 - vrací HTML tabulku se stejnou strukturou
+# sloupců jako obecné vyhledávání na nen.py.
+_ZAHAJENE_ZAKAZKY_URL = (
+    "https://nen.nipez.cz/profily-zadavatelu-platne/detail-profilu/ASPO/zahajene-zakazky"
+)
 
-# XML feed ASPO z NEN (veřejný, bez přihlášení)
-_XML_URL = "https://nen.nipez.cz/profil/ASPO/xmldatavz?Typ=1"
-# Záložní – profil ASPO přímo v NEN
-_NEN_PROFILE_URL = "https://nen.nipez.cz/profil/ASPO"
+_AUTHORITY_NAME = "Armádní Servisní, příspěvková organizace"
+
+# Stav, který znamená "zakázka pořád běží" - stejný princip jako u NEN
+# vyhledávání (nen.py) a zakazky_gov.py.
+_OPEN_STAV = "neukoncen"
 
 
 class AspoScraper(BaseScraper):
     source = "ASPO"
-    url = _NEN_PROFILE_URL
+    url = _ZAHAJENE_ZAKAZKY_URL
     max_pages = 1
 
     async def scrape(self, browser) -> ScrapeResult:
-        """Nejdřív zkusíme XML feed, pak Playwright jako zálohu."""
-        # 1. Pokus: XML feed (rychlý, spolehlivý)
-        tenders = self._scrape_xml()
-        if tenders is not None:
-            filtered = self._filter(tenders)
-            logger.info("ASPO XML: scraped=%s after_filter=%s", len(tenders), len(filtered))
-            return ScrapeResult(source=self.source, tenders=filtered)
-
-        # 2. Záloha: Playwright scraping NEN profilu (s kratším timeoutem,
-        #    aby výpadek NEN nezdržel celý běh)
-        logger.info("ASPO XML nedostupný, zkouším Playwright (krátký timeout)")
         context = await browser.new_context(
             user_agent=(
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -56,7 +76,7 @@ class AspoScraper(BaseScraper):
             await page.goto(self.url, wait_until="domcontentloaded", timeout=45_000)
             raw = await self.scrape_page(page)
             filtered = self._filter(raw)
-            logger.info("ASPO Playwright: scraped=%s after_filter=%s", len(raw), len(filtered))
+            logger.info("ASPO: scraped=%s after_filter=%s", len(raw), len(filtered))
             return ScrapeResult(source=self.source, tenders=filtered)
         except Exception as exc:
             logger.warning("ASPO: NEN profil nedostupný (%s) – přeskakuji bez chyby", exc)
@@ -65,93 +85,59 @@ class AspoScraper(BaseScraper):
         finally:
             await context.close()
 
-    def _scrape_xml(self) -> list[Tender] | None:
-        """Stáhne a parsuje XML feed zakázek ASPO."""
-        try:
-            req = urllib.request.Request(_XML_URL, headers={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/125.0.0.0",
-                "Accept": "application/xml, text/xml, */*",
-            })
-            with urllib.request.urlopen(req, timeout=10) as r:
-                data = r.read()
-
-            root = ET.fromstring(data)
-            tenders: list[Tender] = []
-
-            # XML struktura NEN: <VEREJNA_ZAKAZKA> nebo podobné
-            # Projdeme všechny elementy a hledáme zakázky
-            ns = {"": ""}  # namespace handling
-            for zakazka in root.iter():
-                tag = zakazka.tag.split("}")[-1].lower()  # odstranit namespace
-                if tag not in ("zakazka", "verejna_zakazka", "contract", "item"):
-                    continue
-
-                # Extrahujeme pole
-                def get(names):
-                    for name in names:
-                        el = zakazka.find(f".//{name}")
-                        if el is None:
-                            # bez namespace
-                            for child in zakazka.iter():
-                                if child.tag.split("}")[-1].lower() == name.lower():
-                                    return (child.text or "").strip()
-                    return ""
-
-                title = get(["NAZEV", "NAZEV_ZP", "PREDMET", "nazev", "title"])
-                url = get(["URL", "ODKAZ", "ADRESA", "url", "link"])
-                published = get(["DATUM_UVEREJNENI", "ZVEREJNENO", "DATE_PUBLISHED", "datum"])
-                deadline = get(["LHUTA_PODANI", "DEADLINE", "lhuta"])
-                authority = "Armádní Servisní, p.o."
-                external_id = get(["ID", "CISLO", "EVIDENCNI_CISLO", "id"])
-
-                if not title:
-                    continue
-                if not url:
-                    url = f"{_NEN_PROFILE_URL}#{external_id}" if external_id else _NEN_PROFILE_URL
-
-                tenders.append(Tender(
-                    source=self.source,
-                    title=title,
-                    url=url,
-                    authority=authority,
-                    published_at=published or None,
-                    deadline_at=deadline or None,
-                    external_id=external_id or None,
-                ))
-
-            logger.info("ASPO XML: nalezeno %s zakázek", len(tenders))
-            return tenders
-
-        except Exception as exc:
-            logger.warning("ASPO XML chyba: %s", exc)
-            return None
-
     async def scrape_page(self, page: Page) -> list[Tender]:
-        """Záložní Playwright scraping NEN profilu ASPO."""
+        """Přečte tabulku 'Zahájené zakázky' z profilu ASPO na NEN.
+
+        NEN je SPA - tabulka se dorenderuje až po dotažení dat přes
+        /api/datarows, proto čekáme na řádky, ne jen na domcontentloaded.
+        """
+        try:
+            await page.wait_for_selector("table tr", state="attached", timeout=45_000)
+            await page.wait_for_timeout(3_000)  # doběhnutí případných dalších API volání
+        except Exception:
+            logger.warning("ASPO: tabulka zahájených zakázek se nenačetla")
+            return []
+
+        rows = await page.locator("table tr").all()
+        logger.info("ASPO: řádků v tabulce=%s", len(rows))
+
         tenders: list[Tender] = []
-        visited: set[str] = set()
-        table_xpath = "//table[.//th]"
+        skipped_stav = 0
+        for row in rows:
+            cells = [self.clean_text(await c.inner_text()) for c in await row.locator("td").all()]
+            if len(cells) < 4:
+                continue
 
-        for _ in range(self.max_pages):
-            if page.url in visited:
-                break
-            visited.add(page.url)
-            try:
-                await page.wait_for_selector("body", state="attached", timeout=60_000)
-                await page.wait_for_timeout(5_000)  # NEN načítá JS
-            except Exception:
-                break
+            # Sloupce (ověřeno živě 18.8.2026): 0=Detail, 1=Systémové číslo NEN,
+            # 2=Název zadávacího postupu, 3=Aktuální stav, 4=Zadavatel,
+            # 5=Lhůta podání nabídek, 6=Detail.
+            external_id = cells[1] if len(cells) > 1 else ""
+            title = cells[2] if len(cells) > 2 else ""
+            stav = cells[3] if len(cells) > 3 else ""
+            deadline = cells[5] if len(cells) > 5 else None
 
-            tables = await page.locator("table").count()
-            text_len = len(await page.locator("body").inner_text())
-            logger.info("ASPO NEN str: tables=%s text_len=%s", tables, text_len)
+            if not title or not external_id:
+                continue
 
-            batch = await self.collect_table_tenders(page, table_xpath)
-            for t in batch:
-                t.authority = "Armádní Servisní, p.o."
-                tenders.append(t)
+            # Jen běžící zakázky - stejný princip jako u NEN vyhledávání
+            # a zakazky_gov.py. Bez tohohle filtru by prošly i už zadané/
+            # zrušené zakázky bez lhůty.
+            if stav and normalize_text(stav) != _OPEN_STAV:
+                skipped_stav += 1
+                continue
 
-            if not await self.goto_next_page(page, visited):
-                break
+            id_slug = external_id.replace("/", "-")
+            url = f"https://nen.nipez.cz/verejne-zakazky/detail-zakazky/{id_slug}"
 
+            tenders.append(Tender(
+                source=self.source,
+                title=title,
+                url=url,
+                authority=_AUTHORITY_NAME,
+                published_at=None,
+                deadline_at=deadline or None,
+                external_id=external_id or None,
+            ))
+
+        logger.info("ASPO: nalezeno=%s skip_stav=%s", len(tenders), skipped_stav)
         return self.deduplicate_tenders(tenders)
