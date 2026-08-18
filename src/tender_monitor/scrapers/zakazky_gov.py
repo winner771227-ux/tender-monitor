@@ -5,13 +5,19 @@ VERZE 2 – přímé volání API (bez klikání v prohlížeči).
 Z prvního běhu (UI scraping) a následné analýzy sítě portálu víme:
   * Vyhledávání volá POST https://api.isd.nipez.cz/isd/seznam/zakazek/hlavni-seznam
     s tělem: {"filtr": {"klicova_slova": ["demolice"], "skupinaZakazek": "VSE"},
-              "strankovani": {"stranka": 1, "pocet_zaznamu": N},
+              "strankovani": {"strankovaci_token_zaznamu": "", "pocet_zaznamu": N},
               "razeni": {"atribut": "DATUM_UVEREJNENI_NA_ZAKAZKY_GOV",
                          "typ_razeni": "SESTUPNE"}}
     Odpověď: {"polozky": [...], "posledni_stranka": bool}. Záznam obsahuje
     identifikator_NIPEZ, nazev_verejne_zakazky, nazev_zadavatele,
     popis_predmetu, lhuta_pro_podani (ISO), stav, typ_zadavaciho_postupu.
     POZOR: datum uveřejnění v odpovědi NENÍ (proto v 1. verzi chybělo).
+    POZOR (18.8.2026): API přešlo ze stránkování podle čísla stránky
+    ("stranka": 1) na kurzorové (prázdný "strankovaci_token_zaznamu" pro
+    první stránku, každá položka nese "strankovaci_token" pro další). Staré
+    pole "stranka" server dnes odmítá HTTP 500 s klíčem
+    "chyba.nepodařiloSeZpracovatNastaveniZobrazeni" - to je chyba, kterou
+    hlásil report z 18.8.2026. Ověřeno živě proti produkci.
   * Datum uveřejnění vrací detail zakázky:
     GET https://api.isd.nipez.cz/isd/detail/zakazky/verejna-zakazka/{id}
     v poli "uverejneniNaZakazkyGov" (ISO, např. "2026-07-17T06:47:51.85Z").
@@ -116,7 +122,17 @@ class ZakazkyGovScraper(BaseScraper):
     async def _search_keyword(self, request: APIRequestContext, keyword: str) -> list[Tender]:
         payload = {
             "filtr": {"klicova_slova": [keyword], "skupinaZakazek": "VSE"},
-            "strankovani": {"stranka": 1, "pocet_zaznamu": MAX_ROWS_PER_KEYWORD},
+            # POZOR (oprava 18.8.2026): API přešlo z číslovaného stránkování
+            # ("stranka": 1) na kurzorové - první stránka se žádá prázdným
+            # "strankovaci_token_zaznamu". Staré pole "stranka" server dnes
+            # odmítá s HTTP 500 "chyba.nepodařiloSeZpracovatNastaveniZobrazeni"
+            # (ověřeno živě proti produkčnímu API 18.8.2026). Scraper dál
+            # čte jen první stránku (MAX_ROWS_PER_KEYWORD), token na další
+            # stránku (pole "strankovaci_token" u každé položky) nevyužívá.
+            "strankovani": {
+                "strankovaci_token_zaznamu": "",
+                "pocet_zaznamu": MAX_ROWS_PER_KEYWORD,
+            },
             "razeni": {
                 "atribut": "DATUM_UVEREJNENI_NA_ZAKAZKY_GOV",
                 "typ_razeni": "SESTUPNE",
