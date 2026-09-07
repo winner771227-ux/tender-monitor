@@ -92,9 +92,22 @@ WATCHED_PORTALS = [
              # jen s jedním klíčovým slovem a jedním záznamem — hlídáme
              # tvar odpovědi (klíče jako identifikator_NIPEZ,
              # nazev_verejne_zakazky, lhuta_pro_podani...), ne data.
+             #
+             # OPRAVA (7.9.2026): API přešlo z číslovaného stránkování
+             # ("stranka": 1) na kurzorové (prázdné "strankovaci_token_
+             # zaznamu" pro první stránku). Scraper zakazky_gov.py na to
+             # byl přepnutý už 18.8.2026, ale konfigurace hlídače tehdy
+             # zůstala na starém tvaru, takže hlídač posílal payload, který
+             # server odmítá s HTTP 500 ("chyba.nepodařiloSeZpracovat
+             # NastaveniZobrazeni") — nešlo o skutečnou změnu portálu, jen
+             # o zastaralý dotaz hlídače. Nahrazeno tvarem shodným se
+             # scraperem.
              "json_body": {
                  "filtr": {"klicova_slova": ["demolice"], "skupinaZakazek": "VSE"},
-                 "strankovani": {"stranka": 1, "pocet_zaznamu": 5},
+                 "strankovani": {
+                     "strankovaci_token_zaznamu": "",
+                     "pocet_zaznamu": 5,
+                 },
                  "razeni": {
                      "atribut": "DATUM_UVEREJNENI_NA_ZAKAZKY_GOV",
                      "typ_razeni": "SESTUPNE",
