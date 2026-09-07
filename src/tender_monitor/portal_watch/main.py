@@ -69,6 +69,7 @@ def main() -> int:
                     page["kind"],
                     method=page.get("method", "get"),
                     json_body=page.get("json_body"),
+                    lenient=page.get("lenient", False),
                 )
             except Exception as exc:
                 new_fetch_errors.add(page_key)

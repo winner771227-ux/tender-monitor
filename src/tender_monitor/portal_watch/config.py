@@ -115,7 +115,19 @@ WATCHED_PORTALS = [
              }},
             {"label": "úvodní stránka",
              "url": "https://zakazky.gov.cz/",
-             "kind": "html"},
+             "kind": "html",
+             # OPRAVA (7.9.2026): tahle stránka je jen "pojistka proti
+             # úplnému výpadku nebo redesignu" (scraper na jejím HTML
+             # vůbec nezávisí, viz komentář výše u API). Vyhledávací pole
+             # je ale Angular komponenta vykreslovaná až JS po hydrataci
+             # a dostává auto-generovaná ID/třídy, které se mění při
+             # KAŽDÉM načtení stránky (ne jen při deploy) — proto stejný
+             # alert (stejná ID) padal opakovaně i po aktualizaci otisku.
+             # lenient=True: hlídáme jen hrubou přítomnost formuláře a
+             # vstupního pole, ne přesné třídy/ID (viz fingerprint.py,
+             # _html_fingerprint_shell) — skutečný výpadek/redesign to
+             # pořád zachytí, šum z každého načtení už ne.
+             "lenient": True},
         ],
     },
 ]

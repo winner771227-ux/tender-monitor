@@ -11,6 +11,14 @@ ale jen kostra, na které závisí scrapery:
 Když z otisku něco ZMIZÍ, je to varovný signál — scraper se možná
 odkazuje na prvek, který už neexistuje. Když něco jen PŘIBUDE,
 zpravidla to nevadí (weby přidávají prvky běžně).
+
+U některých stránek (typicky Angular/React SPA, kde hlídač stahuje
+HTML bez prohlížeče a JavaScript se tedy nespustí) se ale vyhledávací
+UI vykresluje jen po hydrataci a dostává auto-generovaná ID/třídy,
+které se mění při KAŽDÉM načtení — ne jen při deploy. Pro takové
+stránky (viz "lenient": True v config.py) proto sledujeme jen hrubou
+přítomnost formulářů/vstupních polí, ne přesné třídy a ID — viz
+_html_fingerprint_shell().
 """
 
 import json
@@ -20,6 +28,12 @@ import requests
 from bs4 import BeautifulSoup
 
 from .config import REQUEST_TIMEOUT, USER_AGENT
+
+# ID delší souvislý blok písmen/číslic bez oddělovače (pomlčka, podtržítko,
+# camelCase hranice) je typicky auto-generovaný (hash, náhodné accessibility
+# ID apod.), ne smysluplný název — takové ID vylučujeme z otisku, aby
+# nezpůsobovalo falešné poplachy při každém načtení stránky.
+_RANDOM_ID_RE = re.compile(r"[a-z0-9]{20,}", re.IGNORECASE)
 
 
 def fetch(url: str, method: str = "get", json_body: dict | None = None):
@@ -65,7 +79,7 @@ def _html_fingerprint(html_text: str) -> dict:
                 continue
             tag_class.add(f"{el.name}.{c}")
         el_id = el.get("id")
-        if el_id and not re.search(r"\d{3,}", el_id):
+        if el_id and not re.search(r"\d{3,}", el_id) and not _RANDOM_ID_RE.search(el_id):
             ids.add(el_id)
 
     for form in soup.find_all("form"):
@@ -80,6 +94,25 @@ def _html_fingerprint(html_text: str) -> dict:
         "tag_class": sorted(tag_class),
         "ids": sorted(ids),
         "forms": sorted(forms),
+    }
+
+
+def _html_fingerprint_shell(html_text: str) -> dict:
+    """
+    Odlehčený otisk pro stránky, kde je UI (vyhledávací formulář apod.)
+    vykreslované až JavaScriptem a hlídač stahuje HTML bez prohlížeče
+    (viz "lenient": True u dané stránky v config.py). Přesné CSS třídy
+    a auto-generovaná ID takových prvků se mění při každém načtení, ne
+    jen při skutečné změně webu — nejsou tedy spolehlivým signálem.
+
+    Sledujeme jen hrubou přítomnost formulářů a vstupních polí: zmizí-li
+    úplně, jde o skutečný výpadek nebo redesign, což je přesně to, k čemu
+    tahle stránka v hlídači slouží (scraper na jejím HTML sám nezávisí).
+    """
+    soup = BeautifulSoup(html_text, "html.parser")
+    return {
+        "has_form": bool(soup.find("form")),
+        "has_input": bool(soup.find("input")),
     }
 
 
@@ -98,9 +131,19 @@ def _json_key_paths(data, prefix="") -> set:
 
 
 def build_fingerprint(
-    url: str, kind: str, method: str = "get", json_body: dict | None = None
+    url: str,
+    kind: str,
+    method: str = "get",
+    json_body: dict | None = None,
+    lenient: bool = False,
 ) -> dict:
-    """Stáhne stránku (nebo zavolá API) a vytvoří její otisk."""
+    """Stáhne stránku (nebo zavolá API) a vytvoří její otisk.
+
+    lenient=True: u HTML stránek se místo přesných tříd/ID/formulářů
+    sleduje jen hrubá přítomnost formulářů a vstupních polí (viz
+    _html_fingerprint_shell) — pro SPA stránky, kde se JS-generovaná
+    ID mění při každém načtení.
+    """
     resp = fetch(url, method=method, json_body=json_body)
     fp = {
         "url": url,
@@ -117,6 +160,8 @@ def build_fingerprint(
             fp["json_keys"] = []
     elif kind == "xml":
         fp.update(_xml_fingerprint(resp.text))
+    elif kind == "html" and lenient:
+        fp.update(_html_fingerprint_shell(resp.text))
     else:
         fp.update(_html_fingerprint(resp.text))
     return fp
@@ -174,6 +219,16 @@ def compare_fingerprints(old: dict, new: dict) -> dict:
         problems.append("Odpověď už není platný JSON — API se pravděpodobně změnilo.")
     if old.get("parses_as_xml") and not new.get("parses_as_xml"):
         problems.append("Odpověď už není platné XML — feed se pravděpodobně změnil.")
+
+    # Hrubá kontrola pro "lenient" stránky (viz _html_fingerprint_shell) —
+    # hlásí jen úplné zmizení formuláře/vstupního pole, ne detail tříd/ID.
+    for bool_field, label in [("has_form", "formulář"), ("has_input", "vstupní pole")]:
+        if bool_field in old and bool_field in new:
+            if old[bool_field] and not new[bool_field]:
+                problems.append(
+                    f"Stránka už neobsahuje žádný prvek typu '{label}' — "
+                    "možný výpadek nebo redesign."
+                )
 
     for field, label in [
         ("tag_class", "HTML prvky/třídy"),
