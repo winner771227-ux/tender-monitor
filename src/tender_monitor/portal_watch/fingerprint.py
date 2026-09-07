@@ -29,11 +29,14 @@ from bs4 import BeautifulSoup
 
 from .config import REQUEST_TIMEOUT, USER_AGENT
 
-# ID delší souvislý blok písmen/číslic bez oddělovače (pomlčka, podtržítko,
-# camelCase hranice) je typicky auto-generovaný (hash, náhodné accessibility
-# ID apod.), ne smysluplný název — takové ID vylučujeme z otisku, aby
-# nezpůsobovalo falešné poplachy při každém načtení stránky.
-_RANDOM_ID_RE = re.compile(r"[a-z0-9]{20,}", re.IGNORECASE)
+# Souvislý běh 20+ znaků, které jsou VŠECHNY malá písmena (žádná velká,
+# žádné číslice), je typicky auto-generovaný hash/náhodné accessibility ID
+# — takové vylučujeme z otisku, aby nezpůsobovalo falešné poplachy při
+# každém načtení stránky. Smysluplná ID (i dlouhá) mají téměř vždy hranice
+# slov vidět přes velbloudí notaci (např. "zadavatelHlavniPredmet",
+# "txtFiltrIcZadavatele") — ty proto NEvylučujeme, jen čisté náhodné bloby
+# bez jediného velkého písmene, jako "japmqpeslplmvkvkdujnqudzfhygsegc".
+_RANDOM_ID_RE = re.compile(r"[a-z]{20,}|[A-Z]{20,}")
 
 
 def fetch(url: str, method: str = "get", json_body: dict | None = None):
