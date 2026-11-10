@@ -9,12 +9,8 @@
     "ok": false
   },
   "E-ZAKAZKY": {
-    "reachable": true,
-    "status": 404,
-    "content_type": "text/html",
-    "is_json": false,
-    "looks_blocked": false,
-    "needs_login": false,
+    "reachable": false,
+    "error": "ReadTimeout",
     "ok": false
   },
   "Vhodné uveřejnění": {
