@@ -71,6 +71,16 @@ def main() -> int:
                     json_body=page.get("json_body"),
                     lenient=page.get("lenient", False),
                 )
+                # OPRAVA (10.11.2026): Odpověď 5xx (např. 503 "služba
+                # dočasně nedostupná") je dočasný výpadek portálu, ne změna
+                # struktury. Místo seznamu zakázek přijde chybová stránka
+                # a porovnání by hlásilo stovky "zmizelých" prvků (falešný
+                # poplach NEN 9.11.2026). Bereme ji proto stejně jako
+                # timeout: poprvé jen do logu, e-mail až při opakování.
+                if new_fp.get("status", 0) >= 500:
+                    raise RuntimeError(
+                        f"portál vrátil chybu {new_fp['status']} (dočasně nedostupný)"
+                    )
             except Exception as exc:
                 new_fetch_errors.add(page_key)
                 detail = (f"Stránku '{page['label']}' se nepodařilo stáhnout "

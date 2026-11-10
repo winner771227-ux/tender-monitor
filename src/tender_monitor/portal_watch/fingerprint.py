@@ -38,6 +38,19 @@ from .config import REQUEST_TIMEOUT, USER_AGENT
 # bez jediného velkého písmene, jako "japmqpeslplmvkvkdujnqudzfhygsegc".
 _RANDOM_ID_RE = re.compile(r"[a-z]{20,}|[A-Z]{20,}")
 
+# OPRAVA (10.11.2026): Pořadové číslo řádku na konci ID (ASP.NET/Angular
+# seznamy, např. "lstZakazky_imgvykricniky_10" nebo "druhVZ__3") závisí
+# na OBSAHU výpisu — kolik zakázek je na stránce a které mají ikonku —
+# ne na struktuře webu. Číslo proto nahrazujeme znakem "#", takže
+# "..._imgvykricniky_10" až "..._14" splynou do jediného
+# "..._imgvykricniky_#". Hlídač pak pozná, když prvek zmizí úplně,
+# ale nereaguje na přeskupení řádků (falešný poplach eVeZa 9.11.2026).
+_ROW_INDEX_RE = re.compile(r"(_+)\d+$")
+
+
+def _normalize_id(el_id: str) -> str:
+    return _ROW_INDEX_RE.sub(r"\1#", el_id)
+
 
 def fetch(url: str, method: str = "get", json_body: dict | None = None):
     """
@@ -83,7 +96,7 @@ def _html_fingerprint(html_text: str) -> dict:
             tag_class.add(f"{el.name}.{c}")
         el_id = el.get("id")
         if el_id and not re.search(r"\d{3,}", el_id) and not _RANDOM_ID_RE.search(el_id):
-            ids.add(el_id)
+            ids.add(_normalize_id(el_id))
 
     for form in soup.find_all("form"):
         action = form.get("action") or ""
