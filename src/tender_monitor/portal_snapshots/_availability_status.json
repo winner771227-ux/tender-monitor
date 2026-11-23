@@ -18,12 +18,8 @@
     "ok": false
   },
   "Vhodné uveřejnění": {
-    "reachable": true,
-    "status": 404,
-    "content_type": "text/html",
-    "is_json": false,
-    "looks_blocked": true,
-    "needs_login": true,
+    "reachable": false,
+    "error": "ConnectTimeout",
     "ok": false
   },
   "Portál Dodavatele": {
